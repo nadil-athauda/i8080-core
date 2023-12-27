@@ -511,7 +511,7 @@ impl CPU {
                 
                 self.c = low_byte;
                 self.b = high_byte;
-                self.pc += 3;
+                self.pc += 2;
 
             }
 
