@@ -95,7 +95,7 @@ impl CPU {
                 
                 self.c = low_byte;
                 self.b = high_byte;
-                self.pc += 3;
+                self.pc += 2;
 
             }
             
@@ -164,11 +164,11 @@ impl CPU {
                 2 Byte
                 Moves byte 2 to B                
                 */
-                let byte_2 = self.ram[(self.pc + 1) as usize];
+                let byte_2 = self.ram[(self.pc) as usize];
 
                 self.b = byte_2;
 
-                self.pc += 2;
+                self.pc += 1;
 
             }
 
@@ -268,11 +268,11 @@ impl CPU {
                 2 Byte
                 Moves byte 2 to C                
                 */
-                let byte_2 = self.ram[(self.pc + 1) as usize];
+                let byte_2 = self.ram[(self.pc) as usize];
 
                 self.c = byte_2;
 
-                self.pc += 2;
+                self.pc += 1;
 
             }
 
@@ -286,7 +286,7 @@ impl CPU {
 
                 self.a = self.a >> 1;
 
-                self.a |= ((self.cy as u8) >> 7);
+                self.a |= (self.cy as u8) >> 7;
 
             }
 
@@ -304,7 +304,7 @@ impl CPU {
                 
                 self.e = low_byte;
                 self.d = high_byte;
-                self.pc += 3;
+                self.pc += 2;
 
             }
 
@@ -373,11 +373,11 @@ impl CPU {
                 2 Byte
                 Moves byte 2 to D                
                 */
-                let byte_2 = self.ram[(self.pc + 1) as usize];
+                let byte_2 = self.ram[(self.pc) as usize];
 
                 self.d = byte_2;
 
-                self.pc += 2;
+                self.pc += 1;
 
             }
 
@@ -474,11 +474,11 @@ impl CPU {
                 2 Byte
                 Moves byte 2 to E                
                 */
-                let byte_2 = self.ram[(self.pc + 1) as usize];
+                let byte_2 = self.ram[(self.pc) as usize];
 
                 self.e = byte_2;
 
-                self.pc += 2;
+                self.pc += 1;
 
             }
 
@@ -503,17 +503,210 @@ impl CPU {
             //LXI H, D16
             (2,1) => {
                 /*
-                3 Byte instruction, (OP/C-Byte/B-Byte)
+                3 Byte instruction, (OP/L-Byte/H-Byte)
                 3 MCycles Op Fetch/Mem Read/Mem Read
                 */
                 let low_byte = self.ram[self.pc as usize] as u8;
                 let high_byte = self.ram[(self.pc + 1) as usize];
                 
-                self.c = low_byte;
-                self.b = high_byte;
+                self.l = low_byte;
+                self.h = high_byte;
                 self.pc += 2;
 
             }
+
+            //SHLD adr
+            (2, 2) => {
+                /*
+                3 Byte
+                Stores L at (Byte 2) and H at (Byte 2) + 1
+                */
+
+                let addr = self.ram[self.pc as usize] as usize;
+
+                self.ram[addr] = self.l;
+                if addr + 1  <= RAM_SIZE {
+                    self.ram[addr + 1] = self.h;
+                    self.pc += 2;
+                } 
+                else {
+                panic!("SHLD Acessing Nonexistant Memory Addr!")};
+                
+            }
+
+            //INX H
+            (2,3) => {
+                /*
+                1 Byte
+                Increments H and L by one, does not affect flags
+                */
+                self.h = self.h.wrapping_add(1);
+                self.l = self.l.wrapping_add(1);
+
+            }
+
+            //INR H
+            (2, 4) => {
+                /*
+                1 Byte
+                Increments H, flags = Z, S, P, AC
+                */
+                let answer:u8 = self.h.wrapping_add(1);
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+
+                self.h = answer as u8;
+            }
+
+            //DCR H
+            (2,5) => {
+                /*
+                1 Byte
+                Decrements (HL), flags = Z, S, P, AC
+                */
+
+                let high_byte = self.h as u16;
+                let low_byte = self.l as u16;
+                let addr = (high_byte << 8) | low_byte;
+
+                let answer = self.ram[addr as usize];
+
+                let answer = answer.wrapping_sub(1);
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+            }
+
+            //MVI H, D8
+            (2, 6) => {
+                /*
+                2 Byte
+                Moves (byte 2) to H                
+                */
+                let byte_2 = self.ram[(self.pc) as usize];
+
+                self.h = byte_2;
+
+                self.pc += 1;
+
+            }
+
+            //DAA
+            (2, 7) => {
+                /*
+                1 Byte
+                8 Bit accumulator is adjusted to form two 4 bit binary-coded-decimal digits
+                Method as for i8080 manual
+                */
+                
+                let mut ls_nibble = self.a & 0x0F;
+                let mut ms_nibble = self.a >> 4;
+
+                if ls_nibble > 9 || self.cy { //ls_nibble is checked to see if greater than 9 or CY flag is set
+                    ls_nibble = ls_nibble.wrapping_add(6); // 6 is added to ls_nibble
+                    self.cy = ls_nibble > 15; // CY flag is set if carry is present
+                }
+
+                if ms_nibble > 9 || self.ac { // ms_nibble is checked to see if greater than 9 or AC flag is set
+                    ms_nibble = ms_nibble.wrapping_add(6); // 6 is added to ms_nibble
+                    self.ac = ms_nibble > 15; // AC flag is set if carry is present
+                }
+
+                self.a = (ms_nibble << 4) | ls_nibble; // Nibbles are merged after computing
+
+                // Other Flags are set
+                self.z = (self.a & 0xFF) == 0;
+                self.s = (self.a & 0x80) != 0;
+                self.p = (self.a.count_ones() % 2) == 0;
+
+            }
+
+            //*NOP
+            (2, 8) => return,
+
+            //DAD H
+            (2, 9) => {
+                /*
+                1 Byte
+                Double Add HL + HL -> HL CY flag
+                */
+                let hl_16:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                let (answer, carry) = hl_16.overflowing_add(hl_16);
+
+                self.cy = carry;
+
+                self.h = (answer >> 8) as u8;
+                self.l = answer as u8;
+            }
+
+            //LHLD adr
+            (2, 0xA) => {
+                /*
+                3 Byte
+                Stores (Byte 2) at L and (Byte 3) at H
+                */
+
+                self.l = self.ram[self.pc as usize];
+                self.h = self.ram[(self.pc + 1) as usize];
+
+                self.pc += 2;
+            }
+
+            //DCX H
+            (2, 0xB) => {
+                /*
+                1 Byte
+                Decrements Register Pair
+                */
+                self.h = self.h.wrapping_sub(1);
+                self.l = self.l.wrapping_sub(1);
+            }
+
+            //INR L
+            (2, 0xC) => {
+                /*
+                1 Byte
+                Increments H, flags = Z, S, P, AC
+                */
+                let answer:u8 = self.l.wrapping_add(1);
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+
+                self.l = answer;
+            }
+
+            //MVI L, D8
+            (2, 0xD) => {
+                /*
+                2 Byte
+                Moves (byte 2) to L                
+                */
+                let byte_2 = self.ram[(self.pc) as usize];
+
+                self.l = byte_2;
+
+                self.pc += 1;
+
+            }
+
+            //CMA
+            (2, 0xF) => {
+                /*
+                1 Byte
+                Returns Ones compliment of accumulator
+                */
+                self.a = !self.a;
+            }
+
+            //*NOP
+            (3, 0) => return,
+
 
             (_, _) => unimplemented!("Unimplemented opcode: {}", op),
         }
