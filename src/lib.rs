@@ -1,3 +1,4 @@
+
 const RAM_SIZE:usize = 65536;
 struct CPU {
     pc:u16, // Program Counter
@@ -62,10 +63,11 @@ impl CPU {
     }
 
     pub fn tick(&mut self) {
-        //Fetch
+        //Fetch & Decode
         let op:u8 = self.fetch();
-        //Decode
+        
         //Execute
+        self.execute(op);
     }
 
     fn fetch(&mut self) -> u8 {
@@ -277,7 +279,7 @@ impl CPU {
             }
 
             //RRC
-            (0, 7) => {
+            (0, 0xF) => {
                 /*
                 1 Byte
                 Rotate Accumulator Right, sets CY to LMB shits A by 1 and concats CY to A
@@ -706,6 +708,480 @@ impl CPU {
 
             //*NOP
             (3, 0) => return,
+
+            //LXI , D16
+            (3,1) => {
+                /*
+                3 Byte instruction, (OP/L-Byte/H-Byte)
+                3 MCycles Op Fetch/Mem Read/Mem Read
+                */
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                self.sp = (high_byte << 8) | low_byte;
+                self.pc += 2;
+
+            }
+
+            //STA , A16
+            (3,2) => {
+                /*
+                3 Byte instruction, (OP/L-Byte/H-Byte)
+                3 MCycles Op Fetch/Mem Read/Mem Read
+                Stores A in two byte addr
+                */
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+                let addr = ((high_byte << 8) | low_byte) as usize;
+
+                self.ram[addr] = self.a;
+                self.pc += 2;
+
+            }
+
+            /* TODO: IMPLEMENT MISSING OP CODES */
+
+            //MVI M, D8
+            (3, 6) => {
+                /*
+                2 Byte
+                Moves byte 2 to (HL)                
+                */
+                let byte_2 = self.ram[(self.pc) as usize];
+                let addr = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = byte_2;
+
+                self.pc += 1;
+
+            }
+
+            //LDA adr
+            (3, 0xA) => {
+                /*
+                1 Byte
+                Loads addr from A
+                */
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+                self.ram[addr as usize] = self.a; 
+            }
+
+            //MVI A, D8
+            (2, 0xE) => {
+                /*
+                2 Byte
+                Moves (byte 2) to L                
+                */
+                let byte_2 = self.ram[(self.pc) as usize];
+
+                self.a = byte_2;
+
+                self.pc += 1;
+
+            }
+
+            //MOV D, M
+            (5, 6) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to D
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.d = self.ram[addr as usize];
+            }
+
+            //MOV E, M
+            (5, 0xE) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to E
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.e = self.ram[addr as usize];
+            }
+
+            //MOV H, M
+            (6, 6) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to H
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.h = self.ram[addr as usize];
+            }
+
+            //MOV L, A
+            (6, 0xF) => {
+                /*
+                1 Byte
+                Moves data from A to L
+                */
+
+                self.l = self.a;
+            }
+
+            //MOV M, A
+            (7, 7) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to H
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.a = self.ram[addr as usize];
+            }
+
+            //MOV A, D
+            (7, 0xA) => {
+                /*
+                1 Byte
+                Moves data from D to A
+                */
+
+                self.a = self.d;
+            }
+
+            //MOV A, E
+            (7, 0xB) => {
+                /*
+                1 Byte
+                Moves data from E to A
+                */
+
+                self.a = self.e;
+            }
+
+            //MOV A, H
+            (7, 0xC) => {
+                /*
+                1 Byte
+                Moves data from H to A
+                */
+
+                self.a = self.h;
+            }
+
+            //MOV A, M
+            (7, 0xE) => {
+                /*
+                1 Byte
+                Moves data from M to A
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.a = self.ram[addr as usize];
+            }
+
+            //ANA A
+            (0xA, 7) => {
+                /*
+                1 Byte
+                A & A affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.a;
+
+                self.cy = false; //Resets carry bit
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA A
+            (0xA, 0xF) => {
+                /*
+                1 Byte
+                A ^ A affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.a;
+
+                self.cy = false; //Resets carry bit
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+
+                self.a = answer;
+
+            }
+
+            //POP B
+            (0xC, 1) => {
+                /*
+                1 Byte
+                Stores (SP) at C, (SP + 1) at B, SP + 2
+                */
+
+                self.c = self.ram[self.sp as usize];
+                self.b = self.ram[(self.sp + 1) as usize];
+
+                self.sp += 2;
+            }
+
+            //JNZ adr
+            (0xC, 2) => {
+                /*
+                3 Byte
+                If Z not set then PC = addr
+                */
+
+                if self.z == false {
+                    let addr:u16 = (((self.pc + 1) as u16) << 8) | (self.pc as u16);
+                    self.pc = addr;
+                } else {
+                    return;
+                }
+            }
+
+            //JNZ adr
+            (0xC, 3) => {
+                /*
+                3 Byte
+                PC = Addr
+                */
+                let addr:u16 = (((self.pc + 1) as u16) << 8) | (self.pc as u16);
+
+                self.pc = addr;
+            }
+
+            //PUSH B
+            (0xC, 5) => {
+                /*
+                1 Byte
+                Stores C at (SP - 2), B at (SP - 1), SP - 2
+                */
+
+                self.ram[(self.sp - 2) as usize] = self.c;
+                self.ram[(self.sp - 1) as usize] = self.b;
+
+                self.sp -= 2;
+            }
+
+            //ADI
+            (0xC, 6) => {
+                /*
+                2 Byte
+                Adds immediate to accumulator
+                */
+                let answer = self.ram[self.pc as usize];
+
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+                self.ac = answer & 0xF == 0;
+                self.cy = answer & 0xF == 0;
+
+                self.a = answer;
+                self.pc += 1;
+            }
+
+
+            //RET
+            (0xC, 9) => {
+                /*
+                1 Byte
+                PC.Low = (SP), PC.high = (SP + 1), SP + 2
+                Subroutine Return
+                */
+
+                let low_byte = self.ram[self.sp as usize] as u16;
+                let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+                self.sp += 2;
+            }
+
+            //CALL adr
+            (0xC, 0xD) => {
+                /*
+                3 Byte
+                (SP-1) = PC.high, (SP-2)= PC.lo, SP = SP-2, PC=addr
+                Subroutine Call
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc - 1) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc - 1) as u8;
+                
+                self.sp -= 2;
+
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+            }
+
+            //POP D
+            (0xD, 1) => {
+                /*
+                1 Byte
+                Stores (SP) at E, (SP + 1) at D, SP + 2
+                */
+
+                self.e = self.ram[self.sp as usize];
+                self.d = self.ram[(self.sp + 1) as usize];
+
+                self.sp += 2;
+            }
+
+            //OUT D8
+            (0xD, 3) => {
+                unimplemented!("Output Attempted {}", op)
+            }
+
+            //PUSH D
+            (0xD, 5) => {
+                /*
+                1 Byte
+                Stores E at (SP - 2), D at (SP - 1), SP - 2
+                */
+
+                self.ram[(self.sp - 2) as usize] = self.e;
+                self.ram[(self.sp - 1) as usize] = self.d;
+
+                self.sp -= 2;
+            }
+
+            //POP H
+            (0xE, 1) => {
+                /*
+                1 Byte
+                Stores (SP) at L, (SP + 1) at H, SP + 2
+                */
+
+                self.l = self.ram[self.sp as usize];
+                self.h = self.ram[(self.sp + 1) as usize];
+
+                self.sp += 2;
+            }
+
+            //PUSH H
+            (0xE, 5) => {
+                /*
+                1 Byte
+                Stores L at (SP - 2), H at (SP - 1), SP - 2
+                */
+
+                self.ram[(self.sp - 2) as usize] = self.l;
+                self.ram[(self.sp - 1) as usize] = self.h;
+
+                self.sp -= 2;
+            }
+
+            //ANI D8
+            (0xE, 6) => {
+                /*
+                2 Byte
+                A & Immediate affects CY, Z, P, S
+                */
+
+                let answer = self.a & self.ram[self.pc as usize];
+
+                self.cy = false; //Resets carry bit
+                self.z = (answer & 0xFF) == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+            }
+
+            //XCHG
+            (0xE, 0xB) => {
+                /*
+                1 Byte
+                Exchanges values in H/D and L/E
+                */
+
+                let mut xchng_byte = self.h;
+
+                self.h = self.d;
+                self.d = xchng_byte;
+
+                xchng_byte = self.l;
+
+                self.l = self.e;
+                self.e = xchng_byte;
+            }
+
+            //POP PSW
+            (0xF, 1) => {
+                /*
+                1 Byte
+                Flags = (SP), A = (SP + 1), SP + 2
+                */
+
+                let flag_val = self.ram[self.sp as usize];
+                self.s = flag_val & 0x80 == 1;
+                self.z = flag_val & 0x40 == 1;
+                self.ac = flag_val & 0x8 == 1;
+                self.p = flag_val & 0x4 == 1;
+                self.cy = flag_val & 0x1 == 1;
+
+                self.a = self.ram[(self.sp + 1) as usize];
+
+                self.sp += 2;
+
+            }
+
+            //PUSH PSW
+            (0xF, 5) => {
+                /*
+                1 Byte
+                (SP) = Flags, (SP + 1) = A, SP - 2
+                */
+
+                let mut flag_value:u8 = 0;
+                flag_value = (flag_value | (self.s as u8)) << 1; //Sign bit
+                flag_value = (flag_value | (self.z as u8)) << 1; //Zero bit
+                flag_value <<= 1;
+                flag_value = (flag_value | (self.ac as u8)) << 1; //Aux Carry bit
+                flag_value <<= 1;
+                flag_value = (flag_value | (self.p as u8)) << 1; //Parity bit
+                flag_value = (flag_value | 1) << 1;
+                flag_value = (flag_value | (self.cy as u8)) << 1; //Carry bit
+
+                self.ram[self.sp as usize] = flag_value;
+
+                self.ram[(self.sp + 1) as usize] = self.a;
+
+                self.sp -= 2;
+            }
+
+            //EI
+            (0xF, 0xB) => {
+                unimplemented!("Enabling interrupts attempted: {}", op)
+            }
+
+            //CPI D8
+            (0xF, 0xE) => {
+                /*
+                2 Bytes
+                Sets Flags based on comparison of A and data
+                */
+                let data = self.ram[self.pc as usize];
+                let answer = self.a.overflowing_sub(data);
+
+                self.z = answer.0 == self.a;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = (answer.0.count_ones() % 2) == 0;
+                self.ac = answer.1;
+
+                //If A and data signs are same carry bit is set normally, if different carry bit is set invertedly
+                self.cy = if ((data >> 7) & (self.a >> 7)) != 0 {answer.1 != true} else {answer.1 == true};
+                
+            }
 
 
             (_, _) => unimplemented!("Unimplemented opcode: {}", op),
