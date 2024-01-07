@@ -1,9 +1,11 @@
+use std::fs::File;
+use std::io::{Result, Write};
 
 const RAM_SIZE:usize = 65536;
-struct CPU {
-    pc:u16, // Program Counter
+pub struct CPU {
+    pub pc:u16, // Program Counter
     sp:u16, // Stack Pointer
-    ram:[u8; RAM_SIZE],
+    pub ram:[u8; RAM_SIZE],
     //Registers
     a:u8, //Primary Accumulator
     b:u8,
@@ -14,7 +16,7 @@ struct CPU {
     l:u8,
     // Flags
     s:bool, // Sign bit, set if result neg
-    z:bool, // Zero bit, set if res zero
+    pub z:bool, // Zero bit, set if res zero
     p:bool, // Parity bit, set if number of 1 bits in res is even
     cy:bool, // Carry bit  
     ac:bool, // Aux carry
@@ -22,7 +24,7 @@ struct CPU {
 
 impl CPU {
     pub fn new() -> Self {
-        let mut new_cpu = Self {
+        let new_cpu = Self {
             pc:0,
             sp:0,
             ram:[0; RAM_SIZE],
@@ -65,9 +67,54 @@ impl CPU {
     pub fn tick(&mut self) {
         //Fetch & Decode
         let op:u8 = self.fetch();
-        
         //Execute
         self.execute(op);
+    }
+
+    pub fn debug_tick (&mut self) {
+        //Fetch & Decode
+        let op:u8 = self.fetch();
+        //Execute
+        self.execute(op);
+
+        let mut flag_value:u8 = 0;
+        let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, false, self.cy];
+        let mut flags = ["","","","",""];
+
+        for flag in &flag_vec {
+            if *flag {
+                flag_value |= 1;
+                flag_value <<= 1;
+            }
+            flag_value <<= 1;
+        }
+
+        flags[0] = if flag_vec[0] {"S"} else {"."};
+        flags[1] = if flag_vec[1] {"Z"} else {"."};
+        flags[2] = if flag_vec[3] {"AC"} else {"."};
+        flags[3] = if flag_vec[5] {"P"} else {"."};
+        flags[4] = if flag_vec[7] {"CY"} else {"."};
+
+        let af = (self.a as u16) << 8 | (flag_value as u16);
+        let bc = (self.b as u16) << 8 | (self.c as u16);
+        let de = (self.d as u16) << 8 | (self.e as u16);
+        let hl = (self.h as u16) << 8 | (self.l as u16);
+
+        
+
+
+        print!("AF-{:x} BC-{:x} DE-{:x} HL-{:x} PC-{:x} SP-{:x} OP-{:x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, op, flags[0], flags[1], flags[2], 
+        flags[3], flags[4]);
+    }
+
+    pub fn load(&mut self, data: &[u8]) {
+        let end = data.len();
+
+        self.ram[0..end].copy_from_slice(data);
+    }
+
+    pub fn load_to(&mut self, data:&[u8], start:usize, end:usize) {
+        self.ram[start..end].copy_from_slice(data);
     }
 
     fn fetch(&mut self) -> u8 {
@@ -87,7 +134,7 @@ impl CPU {
             (0, 0) => return,
             
             //LXI B, D16
-            (0,1) => {
+            (0, 1) => {
                 /*
                 3 Byte instruction, (OP/C-Byte/B-Byte)
                 3 MCycles Op Fetch/Mem Read/Mem Read
@@ -115,49 +162,49 @@ impl CPU {
             }
 
             //INX B
-            (0,3) => {
+            (0, 3) => {
                 /*
                 1 Byte
-                Increments B and C by one, does not affect flags
+                Increments BC by one, does not affect flags
                 */
-                self.b = self.b.wrapping_add(1);
-                self.c = self.c.wrapping_add(1);
-
+                let mut bc:u16 = (self.b as u16) << 8 | (self.c as u16);
+                bc = bc.wrapping_add(1);
+                
+                self.b = (bc >> 8) as u8;
+                self.c = bc as u8;
             }
 
             //INR B
-            (0,4) => {
+            (0, 4) => {
                 /*
                 1 Byte
                 Increments B, flags = Z, S, P, AC
                 */
-                let answer:u8 = self.b.wrapping_add(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.b.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                self.b = answer as u8;
+                self.b = answer.0;
             }
 
             //DCR B
-            (0,5) => {
+            (0, 5) => {
                 /*
                 1 Byte
-                Decrements (BC), flags = Z, S, P, AC
+                Decrements B, flags = Z, S, P, AC
                 */
 
-                let high_byte = self.b as u16;
-                let low_byte = self.c as u16;
-                let addr = (high_byte << 8) | low_byte;
+                let answer = self.b.overflowing_sub(1);
 
-                let answer = self.ram[addr as usize];
+                self.z = answer.0 == 0;
+                self.s = answer.0 & 0x80 != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                let answer = answer.wrapping_sub(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                self.b = answer.0;
+
             }
 
             //MVI B, D8
@@ -235,33 +282,30 @@ impl CPU {
                 1 Byte
                 Increments C, flags = Z, S, P, AC
                 */
-                let answer:u8 = self.c.wrapping_add(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.c.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                self.c = answer as u8;
+                self.c = answer.0;
             }
 
             //DCR C
             (0,0xD) => {
                 /*
                 1 Byte
-                Increments CD, flags = Z, S, P, AC
+                Decrements C, flags = Z, S, P, AC
                 */
 
-                let high_byte = self.c as u16;
-                let low_byte = self.d as u16;
-                let addr = (high_byte << 8) | low_byte;
+                let answer = self.c.overflowing_sub(1);
 
-                let answer = self.ram[addr as usize];
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                let answer = answer.wrapping_sub(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                self.c = answer.0;
             }
 
             //MVI C, D8
@@ -329,8 +373,11 @@ impl CPU {
                 1 Byte
                 Increments D and E by one, does not affect flags
                 */
-                self.d = self.d.wrapping_add(1);
-                self.e = self.e.wrapping_add(1);
+                let mut de:u16 = (self.d as u16) << 8 | (self.e as u16);
+                de = de.wrapping_add(1);
+                
+                self.d = (de >> 8) as u8;
+                self.e = de as u8;
 
             }
 
@@ -340,33 +387,30 @@ impl CPU {
                 1 Byte
                 Increments D, flags = Z, S, P, AC
                 */
-                let answer:u16 = (self.d as u16) + 1;
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.d.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                self.d = answer as u8;
+                self.d = answer.0;
             }
 
             //DCR D
             (1,5) => {
                 /*
                 1 Byte
-                Decrements (DE), flags = Z, S, P, AC
+                Decrements D, flags = Z, S, P, AC
                 */
 
-                let high_byte = self.d as u16;
-                let low_byte = self.e as u16;
-                let addr = (high_byte << 8) | low_byte;
+                let answer = self.d.overflowing_sub(1);
 
-                let answer = self.ram[addr as usize];
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                let answer = answer.wrapping_sub(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                self.d = answer.0;
             }
 
             //MVI D, D8
@@ -416,7 +460,7 @@ impl CPU {
             }
 
              //LDAX D
-             (1, 0xA) => {
+            (1, 0xA) => {
                 /*
                 1 Byte
                 Loads A from memory location (DE)
@@ -441,33 +485,30 @@ impl CPU {
                 1 Byte
                 Increments E, flags = Z, S, P, AC
                 */
-                let answer:u8 = self.e.wrapping_add(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.e.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                self.e = answer as u8;
+                self.e = answer.0;
             }
 
             //DCR E
             (1,0xD) => {
                 /*
                 1 Byte
-                Decrements (EH), flags = Z, S, P, AC
+                Decrements E, flags = Z, S, P, AC
                 */
 
-                let high_byte = self.e as u16;
-                let low_byte = self.h as u16;
-                let addr = (high_byte << 8) | low_byte;
+                let answer = self.e.overflowing_sub(1);
 
-                let answer = self.ram[addr as usize];
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                let answer = answer.wrapping_sub(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                self.e = answer.0;
             }
 
             //MVI E, D8
@@ -542,8 +583,11 @@ impl CPU {
                 1 Byte
                 Increments H and L by one, does not affect flags
                 */
-                self.h = self.h.wrapping_add(1);
-                self.l = self.l.wrapping_add(1);
+                let mut hl:u16 = (self.h as u16) << 8 | (self.l as u16);
+                hl = hl.wrapping_add(1);
+                
+                self.h = (hl >> 8) as u8;
+                self.l = hl as u8;
 
             }
 
@@ -553,13 +597,13 @@ impl CPU {
                 1 Byte
                 Increments H, flags = Z, S, P, AC
                 */
-                let answer:u8 = self.h.wrapping_add(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.h.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                self.h = answer as u8;
+                self.h = answer.0;
             }
 
             //DCR H
@@ -569,17 +613,14 @@ impl CPU {
                 Decrements (HL), flags = Z, S, P, AC
                 */
 
-                let high_byte = self.h as u16;
-                let low_byte = self.l as u16;
-                let addr = (high_byte << 8) | low_byte;
+                let answer = self.h.overflowing_sub(1);
 
-                let answer = self.ram[addr as usize];
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
 
-                let answer = answer.wrapping_sub(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                self.h = answer.0;
             }
 
             //MVI H, D8
@@ -674,17 +715,34 @@ impl CPU {
                 1 Byte
                 Increments H, flags = Z, S, P, AC
                 */
-                let answer:u8 = self.l.wrapping_add(1);
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
+                let answer = self.l.overflowing_add(1);
 
-                self.l = answer;
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+
+                self.l = answer.0;
+            }
+
+            //DCR L
+            (2, 0xD) => {
+                /*
+                1 Byte
+                Decrements H, flags = Z, S, P, AC
+                */
+                let answer = self.l.overflowing_sub(1);
+
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = !answer.1;
+
+                self.l = answer.0;
             }
 
             //MVI L, D8
-            (2, 0xD) => {
+            (2, 0xE) => {
                 /*
                 2 Byte
                 Moves (byte 2) to L                
@@ -767,7 +825,7 @@ impl CPU {
             }
 
             //MVI A, D8
-            (2, 0xE) => {
+            (3, 0xE) => {
                 /*
                 2 Byte
                 Moves (byte 2) to L                
@@ -830,12 +888,22 @@ impl CPU {
             (7, 7) => {
                 /*
                 1 Byte
-                Moves data from M (HL) to H
+                Moves data from M (HL) to A
                 */
 
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
-                self.a = self.ram[addr as usize];
+                self.ram[addr as usize] = self.a;
+            }
+
+            //MOV A, B
+            (7, 8) => {
+                /*
+                1 Byte
+                Moves B to A
+                */
+
+                self.a = self.b;
             }
 
             //MOV A, D
@@ -890,16 +958,15 @@ impl CPU {
                 let answer = self.a & self.a;
 
                 self.cy = false; //Resets carry bit
-                self.z = (answer & 0xFF) == 0;
+                self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
 
                 self.a = answer;
 
             }
 
-            //ANA A
+            //XRA A
             (0xA, 0xF) => {
                 /*
                 1 Byte
@@ -909,10 +976,9 @@ impl CPU {
                 let answer = self.a ^ self.a;
 
                 self.cy = false; //Resets carry bit
-                self.z = (answer & 0xFF) == 0;
+                self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
 
                 self.a = answer;
 
@@ -939,21 +1005,22 @@ impl CPU {
                 */
 
                 if self.z == false {
-                    let addr:u16 = (((self.pc + 1) as u16) << 8) | (self.pc as u16);
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
                 } else {
+                    self.pc += 2;
                     return;
+
                 }
             }
 
-            //JNZ adr
+            //JMP adr
             (0xC, 3) => {
                 /*
                 3 Byte
                 PC = Addr
                 */
-                let addr:u16 = (((self.pc + 1) as u16) << 8) | (self.pc as u16);
-
+                let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                 self.pc = addr;
             }
 
@@ -976,15 +1043,16 @@ impl CPU {
                 2 Byte
                 Adds immediate to accumulator
                 */
-                let answer = self.ram[self.pc as usize];
+                let answer =self.a.overflowing_add(self.ram[self.pc as usize]);
+                
 
-                self.z = (answer & 0xFF) == 0;
-                self.s = (answer & 0x80) != 0;
-                self.p = (answer.count_ones() % 2) == 0;
-                self.ac = answer & 0xF == 0;
-                self.cy = answer & 0xF == 0;
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1 == true;
+                self.cy = answer.1 == true;
 
-                self.a = answer;
+                self.a = answer.0;
                 self.pc += 1;
             }
 
@@ -1012,8 +1080,8 @@ impl CPU {
                 Subroutine Call
                 */
 
-                self.ram[(self.sp - 1) as usize] = ((self.pc - 1) >> 8) as u8;
-                self.ram[(self.sp - 2) as usize] = (self.pc - 1) as u8;
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
                 
                 self.sp -= 2;
 
@@ -1038,7 +1106,9 @@ impl CPU {
 
             //OUT D8
             (0xD, 3) => {
-                unimplemented!("Output Attempted {}", op)
+                //unimplemented!("Output Attempted {}", op)
+                println!("Output Attempted {}", op);
+                self.pc += 1;
             }
 
             //PUSH D
@@ -1143,14 +1213,16 @@ impl CPU {
                 */
 
                 let mut flag_value:u8 = 0;
-                flag_value = (flag_value | (self.s as u8)) << 1; //Sign bit
-                flag_value = (flag_value | (self.z as u8)) << 1; //Zero bit
-                flag_value <<= 1;
-                flag_value = (flag_value | (self.ac as u8)) << 1; //Aux Carry bit
-                flag_value <<= 1;
-                flag_value = (flag_value | (self.p as u8)) << 1; //Parity bit
-                flag_value = (flag_value | 1) << 1;
-                flag_value = (flag_value | (self.cy as u8)) << 1; //Carry bit
+                let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, true, self.cy];
+
+
+                for flag in flag_vec {
+                    if flag {
+                        flag_value |= 1;
+                        flag_value <<= 1;
+                    }
+                    flag_value <<= 1;
+                }
 
                 self.ram[self.sp as usize] = flag_value;
 
@@ -1161,7 +1233,9 @@ impl CPU {
 
             //EI
             (0xF, 0xB) => {
-                unimplemented!("Enabling interrupts attempted: {}", op)
+                //unimplemented!("Enabling interrupts attempted: {}", op)
+                println!("Enabling interrupts attempted: {}", op);
+                return;
             }
 
             //CPI D8
@@ -1170,21 +1244,42 @@ impl CPU {
                 2 Bytes
                 Sets Flags based on comparison of A and data
                 */
-                let data = self.ram[self.pc as usize];
-                let answer = self.a.overflowing_sub(data);
+                let immediate = self.ram[self.pc as usize];
+                let answer = self.a.wrapping_sub(immediate);
 
-                self.z = answer.0 == self.a;
-                self.s = (answer.0 & 0x80) != 0;
-                self.p = (answer.0.count_ones() % 2) == 0;
-                self.ac = answer.1;
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < immediate;
+                self.ac = (self.a & 0x0F) < (immediate & 0x0F);
 
-                //If A and data signs are same carry bit is set normally, if different carry bit is set invertedly
-                self.cy = if ((data >> 7) & (self.a >> 7)) != 0 {answer.1 != true} else {answer.1 == true};
-                
+                self.pc += 1;
             }
 
 
-            (_, _) => unimplemented!("Unimplemented opcode: {}", op),
+            (_, _) => {
+                let example_array: Vec<u8> = self.ram.into_iter().collect();
+                let output_filename = "output.txt";
+                if let Err(err) = array_to_hex_file(&example_array, output_filename) {
+                    eprintln!("Error: {}", err);
+                } else {
+                    println!("Array written to {}", output_filename);
+                }
+                unimplemented!("Unimplemented opcode: {}", op)},
         }
     }
+}
+
+fn array_to_hex_file(array: &[u8], filename: &str) -> Result<()> {
+    let mut file = File::create(filename)?;
+
+    for chunk in array.chunks(16) {
+        for &value in chunk {
+            // Format as two-digit hex and write to the file
+            write!(file, "{:02X} ", value)?;
+        }
+        writeln!(file)?;
+    }
+
+    Ok(())
 }
