@@ -4,7 +4,7 @@ use std::io::{Result, Write};
 const RAM_SIZE:usize = 65536;
 pub struct CPU {
     pub pc:u16, // Program Counter
-    sp:u16, // Stack Pointer
+    pub sp:u16, // Stack Pointer
     pub ram:[u8; RAM_SIZE],
     //Registers
     a:u8, //Primary Accumulator
@@ -16,7 +16,7 @@ pub struct CPU {
     l:u8,
     // Flags
     s:bool, // Sign bit, set if result neg
-    pub z:bool, // Zero bit, set if res zero
+    z:bool, // Zero bit, set if res zero
     p:bool, // Parity bit, set if number of 1 bits in res is even
     cy:bool, // Carry bit  
     ac:bool, // Aux carry
@@ -81,12 +81,10 @@ impl CPU {
         let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, false, self.cy];
         let mut flags = ["","","","",""];
 
-        for flag in &flag_vec {
-            if *flag {
-                flag_value |= 1;
-                flag_value <<= 1;
+        for (i, &flag) in flag_vec.iter().enumerate() {
+            if flag {
+                flag_value |= 1 << (7 - i);
             }
-            flag_value <<= 1;
         }
 
         flags[0] = if flag_vec[0] {"S"} else {"."};
@@ -105,6 +103,33 @@ impl CPU {
 
         print!("AF-{:x} BC-{:x} DE-{:x} HL-{:x} PC-{:x} SP-{:x} OP-{:x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, op, flags[0], flags[1], flags[2], 
         flags[3], flags[4]);
+    }
+
+    pub fn gui_debug_tick (&mut self) -> (Vec<u16>, Vec<&str>){
+        //Fetch & Decode
+        let op:u8 = self.fetch();
+        //Execute
+        self.execute(op);
+
+        let mut flag_value:u8 = 0;
+        let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, false, self.cy];
+        let mut flags = vec!["","","","",""];
+
+        for (i, &flag) in flag_vec.iter().enumerate() {
+            if flag {
+                flag_value |= 1 << (7 - i);
+            }
+        }
+        flags[0] = if flag_vec[0] {"S"} else {"."};
+        flags[1] = if flag_vec[1] {"Z"} else {"."};
+        flags[2] = if flag_vec[3] {"AC"} else {"."};
+        flags[3] = if flag_vec[5] {"P"} else {"."};
+        flags[4] = if flag_vec[7] {"CY"} else {"."};
+
+        let cpu_flags = vec![(self.a as u16) << 8 | (flag_value as u16), (self.b as u16) << 8 | (self.c as u16), 
+                                        (self.d as u16) << 8 | (self.e as u16), (self.h as u16) << 8 | (self.l as u16), op as u16];
+        
+        (cpu_flags, flags)
     }
 
     pub fn load(&mut self, data: &[u8]) {
@@ -368,7 +393,7 @@ impl CPU {
             }
 
             //INX D
-            (1,3) => {
+            (1,  3) => {
                 /*
                 1 Byte
                 Increments D and E by one, does not affect flags
@@ -768,7 +793,7 @@ impl CPU {
             (3, 0) => return,
 
             //LXI , D16
-            (3,1) => {
+            (3, 1) => {
                 /*
                 3 Byte instruction, (OP/L-Byte/H-Byte)
                 3 MCycles Op Fetch/Mem Read/Mem Read
@@ -782,7 +807,7 @@ impl CPU {
             }
 
             //STA , A16
-            (3,2) => {
+            (3, 2) => {
                 /*
                 3 Byte instruction, (OP/L-Byte/H-Byte)
                 3 MCycles Op Fetch/Mem Read/Mem Read
@@ -814,14 +839,20 @@ impl CPU {
 
             }
 
-            //LDA adr
+            //LDA addr
             (3, 0xA) => {
                 /*
-                1 Byte
-                Loads addr from A
+                3 Byte
+                Loads A from addr
                 */
-                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+                
+                let low_byte:u8 = self.ram[self.pc as usize];
+                let high_byte:u8 = self.ram[(self.pc + 1) as usize]; 
+
+                let addr:u16 = ((high_byte as u16) << 8) | (low_byte as u16);
                 self.ram[addr as usize] = self.a; 
+
+                self.pc += 2;
             }
 
             //MVI A, D8
@@ -848,6 +879,16 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.d = self.ram[addr as usize];
+            }
+
+            //MOV D, A
+            (5, 7) => {
+                /*
+                1 Byte
+                Moves data from A to D
+                */
+
+                self.d = self.a;
             }
 
             //MOV E, M
@@ -1165,6 +1206,8 @@ impl CPU {
                 self.p = (answer.count_ones() % 2) == 0;
 
                 self.a = answer;
+
+                self.pc += 1;
             }
 
             //XCHG
@@ -1211,19 +1254,17 @@ impl CPU {
                 1 Byte
                 (SP) = Flags, (SP + 1) = A, SP - 2
                 */
-
+                
                 let mut flag_value:u8 = 0;
                 let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, true, self.cy];
 
 
-                for flag in flag_vec {
+                for (i, &flag) in flag_vec.iter().enumerate() {
                     if flag {
-                        flag_value |= 1;
-                        flag_value <<= 1;
+                        flag_value |= 1 << (7 - i); //0xb1 is shifted by (7- i) places to set bit, bit it OR'ed to flag value;
                     }
-                    flag_value <<= 1;
                 }
-
+                
                 self.ram[self.sp as usize] = flag_value;
 
                 self.ram[(self.sp + 1) as usize] = self.a;
@@ -1233,7 +1274,6 @@ impl CPU {
 
             //EI
             (0xF, 0xB) => {
-                //unimplemented!("Enabling interrupts attempted: {}", op)
                 println!("Enabling interrupts attempted: {}", op);
                 return;
             }
@@ -1258,6 +1298,7 @@ impl CPU {
 
 
             (_, _) => {
+                //Debug Ram Output
                 let example_array: Vec<u8> = self.ram.into_iter().collect();
                 let output_filename = "output.txt";
                 if let Err(err) = array_to_hex_file(&example_array, output_filename) {
@@ -1265,11 +1306,13 @@ impl CPU {
                 } else {
                     println!("Array written to {}", output_filename);
                 }
-                unimplemented!("Unimplemented opcode: {}", op)},
+                
+                panic!("Unimplemented opcode: {}", op)},
         }
     }
 }
 
+// Debug Ram Output Func
 fn array_to_hex_file(array: &[u8], filename: &str) -> Result<()> {
     let mut file = File::create(filename)?;
 
