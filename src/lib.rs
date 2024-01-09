@@ -467,6 +467,9 @@ impl CPU {
 
             }
 
+            //*NOP
+            (1, 8) => return,
+
             //DAD D
             (1, 9) => {
                 /*
@@ -822,7 +825,50 @@ impl CPU {
 
             }
 
-            /* TODO: IMPLEMENT MISSING OP CODES */
+            //INX SP
+            (3, 3) => {
+                /*
+                1 Byte
+                SP = SP + 1
+                */
+                self.sp += 1;
+            }
+
+            //INR M
+            (3, 4) => {
+                /*
+                1 Byte
+                Increments (HL), flags = Z, S, P, AC
+                */
+
+                let addr = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.ram[addr as usize].overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+
+                self.ram[addr as usize] = answer.0;
+            }
+
+            //INR M
+            (3, 5) => {
+                /*
+                1 Byte
+                Decrements (HL), flags = Z, S, P, AC
+                */
+
+                let addr = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.ram[addr as usize].overflowing_sub(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+
+                self.ram[addr as usize] = answer.0;
+            }
 
             //MVI M, D8
             (3, 6) => {
@@ -830,6 +876,7 @@ impl CPU {
                 2 Byte
                 Moves byte 2 to (HL)                
                 */
+
                 let byte_2 = self.ram[(self.pc) as usize];
                 let addr = ((self.h as u16) << 8) | (self.l as u16);
 
@@ -837,6 +884,35 @@ impl CPU {
 
                 self.pc += 1;
 
+            }
+
+            //STC
+            (3, 7) => {
+                /*
+                1 Byte
+                Sets CY flag
+                */
+                
+                self.cy = true;
+            }
+
+            //*NOP
+            (3, 8) => return,
+
+            //DAD SP
+            (3, 9) => {
+                /*
+                1 Byte
+                Double Add SP + HL -> HL CY flag
+                */
+                let hl_16:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                let (answer, carry) = hl_16.overflowing_add(self.sp);
+
+                self.cy = carry;
+
+                self.h = (answer >> 8) as u8;
+                self.l = answer as u8;
             }
 
             //LDA addr
@@ -855,6 +931,46 @@ impl CPU {
                 self.pc += 2;
             }
 
+            //DCX SP
+            (3, 0xB) => {
+                /*
+                1 Byte
+                Decrements SP
+                */
+                
+                self.sp = self.sp.wrapping_sub(1);
+            }
+
+            //INR A
+            (3, 0xC) => {
+                /*
+                1 Byte
+                Increments A, flags = Z, S, P, AC
+                */
+                let answer = self.a.overflowing_add(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+
+                self.a = answer.0;
+            }
+
+            //DCR A
+            (3, 0xD) => {
+                /*
+                1 Byte
+                Decrements A, flags = Z, S, P, AC
+                */
+                let answer = self.a.overflowing_sub(1);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+
+                self.a = answer.0;
+            }
+
             //MVI A, D8
             (3, 0xE) => {
                 /*
@@ -867,6 +983,240 @@ impl CPU {
 
                 self.pc += 1;
 
+            }
+
+            //CMC
+            (3, 0xF) => {
+                /*
+                1 Byte
+                Inverts CY
+                */
+
+                self.cy = !self.cy;
+            }
+
+            //MOV B, B
+            (4, 0) => {
+                /*
+                1 Byte
+                Moves data from B to B
+                */
+
+                self.b = self.b;
+            }
+            
+            //MOV B, C
+            (4, 1) => {
+                /*
+                1 Byte
+                Moves data from C to B
+                */
+
+                self.b = self.c;
+            }
+
+            //MOV B, D
+            (4, 2) => {
+                /*
+                1 Byte
+                Moves data from D to B
+                */
+
+                self.b = self.d;
+            }
+
+            //MOV B, E
+            (4, 3) => {
+                /*
+                1 Byte
+                Moves data from E to B
+                */
+
+                self.b = self.e;
+            }
+
+            //MOV B, H
+            (4, 4) => {
+                /*
+                1 Byte
+                Moves data from H to B
+                */
+
+                self.b = self.h;
+            }
+
+            //MOV B, L
+            (4, 5) => {
+                /*
+                1 Byte
+                Moves data from L to B
+                */
+
+                self.b = self.l;
+            }
+
+            //MOV B, M
+            (4, 6) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to B
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.b = self.ram[addr as usize];
+            }
+
+            //MOV B, A
+            (4, 7) => {
+                /*
+                1 Byte
+                Moves data from A to B
+                */
+
+                self.b = self.a;
+            }
+
+            //MOV C, B
+            (4, 8) => {
+                /*
+                1 Byte
+                Moves data from B to C
+                */
+
+                self.c = self.b;
+            }
+
+            //MOV C, C
+            (4, 9) => {
+                /*
+                1 Byte
+                Moves data from C to C
+                */
+
+                self.c = self.c;
+            }
+
+            //MOV C, D
+            (4, 0xA) => {
+                /*
+                1 Byte
+                Moves data from D to C
+                */
+
+                self.c = self.d;
+            }
+
+            //MOV C, E
+            (4, 0xB) => {
+                /*
+                1 Byte
+                Moves data from E to C
+                */
+
+                self.c = self.e;
+            }
+
+            //MOV C, H
+            (4, 0xC) => {
+                /*
+                1 Byte
+                Moves data from H to C
+                */
+
+                self.c = self.h;
+            }
+
+            //MOV C, L
+            (4, 0xD) => {
+                /*
+                1 Byte
+                Moves data from L to C
+                */
+
+                self.c = self.l;
+            }
+
+            //MOV C, M
+            (4, 0xE) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to C
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.c = self.ram[addr as usize];
+            }
+
+            //MOV C, A
+            (4, 0xF) => {
+                /*
+                1 Byte
+                Moves data from A to C
+                */
+
+                self.c = self.a;
+            }
+            
+            //MOV D, B
+            (5, 0) => {
+                /*
+                1 Byte
+                Moves data from B to D
+                */
+
+                self.d = self.b;
+            }
+
+            //MOV D, C
+            (5, 1) => {
+                /*
+                1 Byte
+                Moves data from C to D
+                */
+
+                self.d = self.c;
+            }
+
+            //MOV D, D
+            (5, 2) => {
+                /*
+                1 Byte
+                Moves data from D to D
+                */
+
+                self.d = self.d;
+            }
+
+            //MOV D, E
+            (5, 3) => {
+                /*
+                1 Byte
+                Moves data from E to D
+                */
+
+                self.d = self.e;
+            }
+
+            //MOV D, H
+            (5, 4) => {
+                /*
+                1 Byte
+                Moves data from H to D
+                */
+
+                self.d = self.h;
+            }
+
+            //MOV D, L
+            (5, 5) => {
+                /*
+                1 Byte
+                Moves data from L to D
+                */
+
+                self.d = self.l;
             }
 
             //MOV D, M
@@ -891,6 +1241,67 @@ impl CPU {
                 self.d = self.a;
             }
 
+            //MOV E, B
+            (5, 8) => {
+                /*
+                1 Byte
+                Moves data from B to E
+                */
+
+                self.e = self.b;
+            }
+
+            //MOV E, C
+            (5, 9) => {
+                /*
+                1 Byte
+                Moves data from C to E
+                */
+
+                self.e = self.c;
+            }
+
+            //MOV E, D
+            (5, 0xA) => {
+                /*
+                1 Byte
+                Moves data from D to E
+                */
+
+                self.e = self.d;
+            }
+
+            //MOV E, E
+            (5, 0xB) => {
+                /*
+                1 Byte
+                Moves data from E to E
+                */
+
+                self.e = self.e;
+            }
+
+            //MOV E, H
+            (5, 0xC) => {
+                /*
+                1 Byte
+                Moves data from H to E
+                */
+
+                self.e = self.h;
+            }
+
+            //MOV E, L
+            (5, 0xD) => {
+                /*
+                1 Byte
+                Moves data from L to E
+                */
+
+                self.e = self.l;
+            }
+
+
             //MOV E, M
             (5, 0xE) => {
                 /*
@@ -901,6 +1312,76 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.e = self.ram[addr as usize];
+            }
+
+            //MOV E, A
+            (5, 0xF) => {
+                /*
+                1 Byte
+                Moves data from A to E
+                */
+
+                self.e = self.a;
+            }
+
+            //MOV H, B
+            (6, 0) => {
+                /*
+                1 Byte
+                Moves data from B to H
+                */
+
+                self.h = self.b;
+            }
+
+            //MOV H, C
+            (6, 1) => {
+                /*
+                1 Byte
+                Moves data from C to H
+                */
+
+                self.h = self.c;
+            }
+
+            //MOV H, D
+            (6, 2) => {
+                /*
+                1 Byte
+                Moves data from D to H
+                */
+
+                self.h = self.d;
+            }
+
+            //MOV H, E
+            (6, 3) => {
+                /*
+                1 Byte
+                Moves data from E to H
+                */
+
+                self.h = self.e;
+            }
+
+            //MOV H, H
+            (6, 4) => {
+                /*
+                1 Byte
+                Moves data from H to H
+                */
+
+                self.h = self.h;
+            }
+
+            //MOV H, L
+            (6, 5) => {
+                /*
+                1 Byte
+                Moves data from L to H
+                */
+
+                self.h = self.l;
             }
 
             //MOV H, M
@@ -915,6 +1396,88 @@ impl CPU {
                 self.h = self.ram[addr as usize];
             }
 
+            //MOV H, A
+            (6, 7) => {
+                /*
+                1 Byte
+                Moves data from A to H
+                */
+
+                self.h = self.a;
+            }
+
+            //MOV L, B
+            (6, 8) => {
+                /*
+                1 Byte
+                Moves data from B to L
+                */
+
+                self.l = self.b;
+            }
+
+            //MOV L, C
+            (6, 9) => {
+                /*
+                1 Byte
+                Moves data from C to L
+                */
+
+                self.l = self.c;
+            }
+
+            //MOV L, D
+            (6, 0xA) => {
+                /*
+                1 Byte
+                Moves data from D to L
+                */
+
+                self.l = self.d;
+            }
+
+            //MOV L, E
+            (6, 0xB) => {
+                /*
+                1 Byte
+                Moves data from E to L
+                */
+
+                self.l = self.e;
+            }
+
+            //MOV L, H
+            (6, 0xC) => {
+                /*
+                1 Byte
+                Moves data from H to L
+                */
+
+                self.l = self.h;
+            }
+
+            //MOV L, L
+            (6, 0xD) => {
+                /*
+                1 Byte
+                Moves data from L to L
+                */
+
+                self.l = self.l;
+            }
+
+            //MOV L, M
+            (6, 0xE) => {
+                /*
+                1 Byte
+                Moves data from M (HL) to L
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.l = self.ram[addr as usize];
+            }
+
             //MOV L, A
             (6, 0xF) => {
                 /*
@@ -925,11 +1488,88 @@ impl CPU {
                 self.l = self.a;
             }
 
+            //MOV M, B
+            (7, 0) => {
+                /*
+                1 Byte
+                Moves data from B to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.b;
+            }
+
+            //MOV M, C
+            (7, 1) => {
+                /*
+                1 Byte
+                Moves data from C to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.c;
+            }
+
+            //MOV M, D
+            (7, 2) => {
+                /*
+                1 Byte
+                Moves data from D to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.d;
+            }
+            
+            //MOV M, E
+            (7, 3) => {
+                /*
+                1 Byte
+                Moves data from E to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.e;
+            }
+
+            //MOV M, H
+            (7, 4) => {
+                /*
+                1 Byte
+                Moves data from H to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.h;
+            }
+
+            //MOV M, L
+            (7, 5) => {
+                /*
+                1 Byte
+                Moves data from L to M (HL)
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                self.ram[addr as usize] = self.l;
+            }
+
+            //HLT
+            (7, 6) => {
+                unimplemented!("Called 0x76 HLT")
+            }
+
             //MOV M, A
             (7, 7) => {
                 /*
                 1 Byte
-                Moves data from M (HL) to A
+                Moves data from A to M (HL)
                 */
 
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
@@ -989,6 +1629,760 @@ impl CPU {
                 self.a = self.ram[addr as usize];
             }
 
+            //MOV A, A
+            (7, 0xF) => {
+                /*
+                1 Byte
+                Moves data from A to A
+                */
+
+                self.a = self.a;
+            }
+
+            //ADD B
+            (8, 0) => {
+                /*
+                1 Byte
+                Adds B to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.b);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD C
+            (8, 1) => {
+                /*
+                1 Byte
+                Adds C to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.c);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD D
+            (8, 2) => {
+                /*
+                1 Byte
+                Adds D to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.d);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD E
+            (8, 3) => {
+                /*
+                1 Byte
+                Adds C to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.e);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD H
+            (8, 4) => {
+                /*
+                1 Byte
+                Adds H to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.h);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD L
+            (8, 5) => {
+                /*
+                1 Byte
+                Adds L to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.l);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD M
+            (8, 6) => {
+                /*
+                1 Byte
+                Adds M (HL) to A, Flags - Z, S, P, CY, AC 
+                */
+                
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                let answer = self.a.overflowing_add(self.ram[addr as usize]);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADD A
+            (8, 7) => {
+                /*
+                1 Byte
+                Adds L to A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_add(self.a);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //ADC B
+            (8, 8) => {
+                /*
+                1 Byte
+                Adds B + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.b);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC C
+            (8, 9) => {
+                /*
+                1 Byte
+                Adds C + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.c);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC D
+            (8, 0xA) => {
+                /*
+                1 Byte
+                Adds D + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.d);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC E
+            (8, 0xB) => {
+                /*
+                1 Byte
+                Adds E + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.e);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC H
+            (8, 0xC) => {
+                /*
+                1 Byte
+                Adds H + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.h);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC L
+            (8, 0xD) => {
+                /*
+                1 Byte
+                Adds E + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.l);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC M
+            (8, 0xE) => {
+                /*
+                1 Byte
+                Adds (HL) + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+                
+                let (answer, carry) = self.a.overflowing_add(self.ram[addr as usize]);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ADC A
+            (8, 0xF) => {
+                /*
+                1 Byte
+                Adds E + A + CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.a);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SUB B
+            (9, 0) => {
+                /*
+                1 Byte
+                Subtract B and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.b);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB C
+            (9, 1) => {
+                /*
+                1 Byte
+                Subtract C and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.c);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB D
+            (9, 2) => {
+                /*
+                1 Byte
+                Subtract D and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.d);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB E
+            (9, 3) => {
+                /*
+                1 Byte
+                Subtract C and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.e);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB H
+            (9, 4) => {
+                /*
+                1 Byte
+                Subtract H and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.h);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB L
+            (9, 5) => {
+                /*
+                1 Byte
+                Subtract L and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.l);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB M
+            (9, 6) => {
+                /*
+                1 Byte
+                Subtract M (HL) and A, Flags - Z, S, P, CY, AC 
+                */
+                
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                let answer = self.a.overflowing_sub(self.ram[addr as usize]);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SUB A
+            (9, 7) => {
+                /*
+                1 Byte
+                Subtract L and A, Flags - Z, S, P, CY, AC 
+                */
+
+                let answer = self.a.overflowing_sub(self.a);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //SBB B
+            (9, 8) => {
+                /*
+                1 Byte
+                Subtracts B - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.b);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB C
+            (9, 9) => {
+                /*
+                1 Byte
+                Subtracts C - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.c);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB D
+            (9, 0xA) => {
+                /*
+                1 Byte
+                Subtracts D - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.d);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB E
+            (9, 0xB) => {
+                /*
+                1 Byte
+                Subtracts E - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.e);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB H
+            (9, 0xC) => {
+                /*
+                1 Byte
+                Subtracts H - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.h);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB L
+            (9, 0xD) => {
+                /*
+                1 Byte
+                Subtracts E - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.l);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB M
+            (9, 0xE) => {
+                /*
+                1 Byte
+                Subtracts (HL) - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
+                
+                let (answer, carry) = self.a.overflowing_sub(self.ram[addr as usize]);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //SBB A
+            (9, 0xF) => {
+                /*
+                1 Byte
+                Subtracts E - A - CY, Flags - Z, S, P, CY, AC 
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.a);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                self.z = carry_answer == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = carry_answer.count_ones() % 2 == 0;
+                self.ac = carry || carry_2;
+                self.cy = carry || carry_2;
+
+                self.a = carry_answer;
+
+            }
+
+            //ANA B
+            (0xA, 0) => {
+                /*
+                1 Byte
+                A & B affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.b;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA C
+            (0xA, 1) => {
+                /*
+                1 Byte
+                A & C affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.c;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA D
+            (0xA, 2) => {
+                /*
+                1 Byte
+                A & D affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.d;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA E
+            (0xA, 3) => {
+                /*
+                1 Byte
+                A & E affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.e;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA H
+            (0xA, 4) => {
+                /*
+                1 Byte
+                A & H affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.h;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA L
+            (0xA, 5) => {
+                /*
+                1 Byte
+                A & L affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a & self.l;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ANA M
+            (0xA, 6) => {
+                /*
+                1 Byte
+                A & (HL) affects CY, Z, S, P, AC
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.a & self.ram[addr as usize];
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
             //ANA A
             (0xA, 7) => {
                 /*
@@ -997,6 +2391,134 @@ impl CPU {
                 */
 
                 let answer = self.a & self.a;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA B
+            (0xA, 8) => {
+                /*
+                1 Byte
+                A ^ B affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.b;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA C
+            (0xA, 9) => {
+                /*
+                1 Byte
+                A ^ C affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.c;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA D
+            (0xA, 0xA) => {
+                /*
+                1 Byte
+                A ^ D affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.d;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA E
+            (0xA, 0xB) => {
+                /*
+                1 Byte
+                A ^ E affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.e;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA H
+            (0xA, 0xC) => {
+                /*
+                1 Byte
+                A ^ H affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.h;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA L
+            (0xA, 0xD) => {
+                /*
+                1 Byte
+                A ^ L affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a ^ self.l;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //XRA M
+            (0xA, 0xE) => {
+                /*
+                1 Byte
+                A ^ (HL) affects CY, Z, S, P, AC
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.a ^ self.ram[addr as usize];
 
                 self.cy = false; //Resets carry bit
                 self.z = answer == 0;
@@ -1023,6 +2545,301 @@ impl CPU {
 
                 self.a = answer;
 
+            }
+
+             //ORA B
+            (0xB, 0) => {
+                /*
+                1 Byte
+                A | B affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.b;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA C
+            (0xB, 1) => {
+                /*
+                1 Byte
+                A | C affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.c;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA D
+            (0xB, 2) => {
+                /*
+                1 Byte
+                A | D affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.d;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA E
+            (0xB, 3) => {
+                /*
+                1 Byte
+                A | E affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.e;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA H
+            (0xB, 4) => {
+                /*
+                1 Byte
+                A | H affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.h;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA L
+            (0xB, 5) => {
+                /*
+                1 Byte
+                A | L affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.l;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA M
+            (0xB, 6) => {
+                /*
+                1 Byte
+                A | (HL) affects CY, Z, S, P, AC
+                */
+
+                let addr:u16 = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.a | self.ram[addr as usize];
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //ORA A
+            (0xB, 7) => {
+                /*
+                1 Byte
+                A | A affects CY, Z, S, P, AC
+                */
+
+                let answer = self.a | self.a;
+
+                self.cy = false; //Resets carry bit
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = (answer.count_ones() % 2) == 0;
+
+                self.a = answer;
+
+            }
+
+            //CPM B
+            (0xB, 8) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and B
+                */
+
+                let answer = self.a.wrapping_sub(self.b);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.b;
+                self.ac = (self.a & 0x0F) < (self.b & 0x0F);
+            }
+
+            //CPM C
+            (0xB, 9) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and C
+                */
+
+                let answer = self.a.wrapping_sub(self.c);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.c;
+                self.ac = (self.a & 0x0F) < (self.c & 0x0F);
+            }
+
+            //CPM D
+            (0xB, 0xA) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and D
+                */
+
+                let answer = self.a.wrapping_sub(self.d);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.d;
+                self.ac = (self.a & 0x0F) < (self.d & 0x0F);
+            }
+
+            //CPM E
+            (0xB, 0xB) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and E
+                */
+
+                let answer = self.a.wrapping_sub(self.e);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.e;
+                self.ac = (self.a & 0x0F) < (self.e & 0x0F);
+            }
+
+            //CPM H
+            (0xB, 0xC) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and H
+                */
+
+                let answer = self.a.wrapping_sub(self.h);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.h;
+                self.ac = (self.a & 0x0F) < (self.h & 0x0F);
+            }
+
+            //CPM L
+            (0xB, 0xD) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and L
+                */
+
+                let answer = self.a.wrapping_sub(self.l);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.l;
+                self.ac = (self.a & 0x0F) < (self.l & 0x0F);
+            }
+
+            //CPM M
+            (0xB, 0xE) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and (HL)
+                */
+
+                let addr = ((self.h as u16) << 8) | self.l as u16;
+
+                let answer = self.a.wrapping_sub(self.ram[addr as usize]);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < self.l;
+                self.ac = (self.a & 0x0F) < (self.l & 0x0F);
+            }
+
+            //CPM A
+            (0xB, 0xF) => {
+                /*
+                1 Bytes
+                Sets Flags based on comparison of A and A
+                */
+
+                let answer = self.a.wrapping_sub(self.a);
+
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                self.cy = self.a < answer;
+                self.ac = (self.a & 0x0F) < (answer & 0x0F);
+            }
+            
+            //RNZ
+            (0xC, 0) => {
+                /*
+                1 Byte
+                If Z not set, RET
+                */
+
+                if self.z == false {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
             }
 
             //POP B
@@ -1055,7 +2872,7 @@ impl CPU {
                 }
             }
 
-            //JMP adr
+            //JMP addr
             (0xC, 3) => {
                 /*
                 3 Byte
@@ -1063,6 +2880,30 @@ impl CPU {
                 */
                 let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                 self.pc = addr;
+            }
+
+            //CNZ addr
+            (0xC, 4) => {
+                /*
+                3 Bytes
+                If Z not set, CALL addr
+                */
+
+                if self.z == false {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
             }
 
             //PUSH B
@@ -1078,7 +2919,7 @@ impl CPU {
                 self.sp -= 2;
             }
 
-            //ADI
+            //ADI D8
             (0xC, 6) => {
                 /*
                 2 Byte
@@ -1097,6 +2938,40 @@ impl CPU {
                 self.pc += 1;
             }
 
+            //RST 0
+            (0xC, 7) => {
+                /*
+                1 Byte
+                CALL $0
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x0;
+
+            }
+
+            //RZ
+            (0xC, 8) => {
+                /*
+                1 Byte
+                If Z is set, RET
+                */
+
+                if self.z {
+                        let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
 
             //RET
             (0xC, 9) => {
@@ -1111,6 +2986,59 @@ impl CPU {
 
                 self.pc = (high_byte << 8) | low_byte;
                 self.sp += 2;
+            }
+
+            //JZ addr
+            (0xC, 0xA) => {
+                /*
+                3 Byte
+                If Z is set, PC = Addr
+                */
+                if self.z {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                }
+                else {
+                    self.pc += 2;
+                    return;
+                }
+            }
+
+            //*JMP addr
+            (0xC, 0xB) => {
+                /*
+                3 Byte
+                If Z is set, PC = Addr
+                */
+
+                let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                self.pc = addr;
+
+            }
+
+            //CZ adr
+            (0xC, 0xC) => {
+                /*
+                3 Byte
+                If Z is set, CALL addr
+                Call = (SP-1) = PC.high, (SP-2)= PC.lo, SP = SP-2, PC=addr
+                Subroutine Call
+                */
+
+                if self.z {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
             }
 
             //CALL adr
@@ -1132,6 +3060,63 @@ impl CPU {
                 self.pc = (high_byte << 8) | low_byte;
             }
 
+            //ACI D8
+            (0xC, 0xE) => {
+                /*
+                2 Byte
+                Add A + Immediate Data + CY, affects Z, S, P, CY, AC
+                */
+
+                let (answer, carry) = self.a.overflowing_add(self.ram[self.pc as usize]);
+                let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
+
+                
+                self.z = (carry_answer & 0xFF) == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = (carry_answer.count_ones() % 2) == 0;
+                self.cy = carry || carry_2;
+                self.ac = carry || carry_2;
+
+                self.a = carry_answer;
+
+                self.pc += 1;
+            }
+
+            //RST 1
+            (0xC, 0xF) => {
+                /*
+                1 Byte
+                CALL $8 (0x0008)
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x8;
+
+            }
+
+            //RNC
+            (0xD, 0) => {
+                /*
+                1 Byte
+                If CY not set, RET
+                */
+
+                if self.cy == false {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
+
             //POP D
             (0xD, 1) => {
                 /*
@@ -1145,11 +3130,51 @@ impl CPU {
                 self.sp += 2;
             }
 
+            //JNC Addr
+            (0xD, 2) => {
+                /*
+                3 Byte
+                If CY not set then PC = addr
+                */
+
+                if self.cy == false {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                } else {
+                    self.pc += 2;
+                    return;
+
+                }
+            }
+
             //OUT D8
             (0xD, 3) => {
-                //unimplemented!("Output Attempted {}", op)
                 println!("Output Attempted {}", op);
                 self.pc += 1;
+            }
+
+            //CNC addr
+            (0xD, 4) => {
+                /*
+                3 Bytes
+                If CY not set, CALL addr
+                */
+
+                if self.cy == false {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
             }
 
             //PUSH D
@@ -1165,6 +3190,199 @@ impl CPU {
                 self.sp -= 2;
             }
 
+            //SUI D8
+            (0xD, 6) => {
+                /*
+                2 Byte
+                Subtract A and Immediate Data, Flags - Z, S, P, CY, AC 
+                */
+
+                let data = self.ram[self.pc as usize];
+
+                let answer = self.a.overflowing_sub(data);
+                self.z = answer.0 == 0;
+                self.s = (answer.0 & 0x80) != 0;
+                self.p = answer.0.count_ones() % 2 == 0;
+                self.ac = answer.1;
+                self.cy = answer.1;
+
+                self.a = answer.0;
+
+            }
+
+            //RST 2
+            (0xD, 7) => {
+                /*
+                1 Byte
+                CALL $0 (0x0000)
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x10;
+
+            }
+
+            //RC
+            (0xD, 8) => {
+                /*
+                1 Byte
+                If CY is set, RET
+                */
+
+                if self.cy {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
+
+            //*RET
+            (0xD, 9) => {
+                /*
+                1 Byte
+                PC.Low = (SP), PC.high = (SP + 1), SP + 2
+                Subroutine Return
+                */
+
+                let low_byte = self.ram[self.sp as usize] as u16;
+                let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+                self.sp += 2;
+            }
+            
+            //JC addr
+            (0xD, 0xA) => {
+                /*
+                3 Byte
+                If CY is set, PC = Addr
+                */
+                if self.cy {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                }
+                else {
+                    self.pc += 2;
+                    return;
+                }
+            }
+
+            //IN D8
+            (0xD, 0xB) => {
+                println!("Input Attempted {}", op);
+                self.pc += 1;
+            }
+
+            //CC addr
+            (0xD, 0xC) => {
+                /*
+                3 Bytes
+                If CY is set, CALL addr
+                */
+
+                if self.cy{
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
+            }
+
+            //*CALL
+            (0xD, 0xD) => {
+                /*
+                3 Byte
+                (SP-1) = PC.high, (SP-2)= PC.lo, SP = SP-2, PC=addr
+                Subroutine Call
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+            }
+
+            //SBI D8
+            (0xD, 0xE) => {
+                /*
+                2 Byte
+                Subtract A - Immediate Data - CY, affects Z, S, P, CY, AC
+                */
+
+                let (answer, carry) = self.a.overflowing_sub(self.ram[self.pc as usize]);
+                let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
+
+                
+                self.z = (carry_answer & 0xFF) == 0;
+                self.s = (carry_answer & 0x80) != 0;
+                self.p = (carry_answer.count_ones() % 2) == 0;
+                self.cy = carry || carry_2;
+                self.ac = carry || carry_2;
+
+                self.a = carry_answer;
+
+                self.pc += 1;
+            }
+
+            //RST 3
+            (0xD, 0xF) => {
+                /*
+                1 Byte
+                CALL $13
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x13;
+
+            }
+
+            //RPO
+            (0xE, 0) => {
+                /*
+                1 Byte
+                If P not set (odd parity), RET
+                */
+
+                if self.p == false {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
+
+
             //POP H
             (0xE, 1) => {
                 /*
@@ -1176,6 +3394,66 @@ impl CPU {
                 self.h = self.ram[(self.sp + 1) as usize];
 
                 self.sp += 2;
+            }
+
+            //JPO addr
+            (0xE, 2) => {
+                /*
+                3 Byte
+                If P not set then PC = addr
+                */
+
+                if self.p == false {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                } else {
+                    self.pc += 2;
+                    return;
+
+                }
+            }
+
+            //XTHL
+            (0xE, 3) => {
+                /*
+                1 Byte
+                Exchange values in L/(SP) and H(SP + 1)
+                */
+
+                let mut xchng_byte = self.h;
+
+                self.h = self.ram[(self.sp + 1) as usize];
+                self.ram[self.sp as usize] = xchng_byte;
+
+                xchng_byte = self.l;
+
+                self.l = self.ram[self.sp as usize];
+                self.ram[self.sp as usize] = xchng_byte;
+
+            }
+
+            //CPO addr
+            (0xE, 4) => {
+                /*
+                3 Bytes
+                If P not set, CALL addr
+                */
+
+                if self.p == false {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
             }
 
             //PUSH H
@@ -1210,6 +3488,72 @@ impl CPU {
                 self.pc += 1;
             }
 
+            //RST 4
+            (0xE, 7) => {
+                /*
+                1 Byte
+                CALL $20
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x20;
+
+            }
+
+            //RPE
+            (0xE, 8) => {
+                /*
+                1 Byte
+                If P is set (even parity), RET
+                */
+
+                if self.p {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
+
+            //PCHL
+            (0xE, 9) => {
+                /*
+                1 Byte
+                PC.hi = H; PC.lo = L
+                */
+
+                let high_byte = (self.h as u16) << 8;
+                let low_byte = self.l as u16;
+
+                self.pc = high_byte | low_byte;
+
+            }
+
+            //JPE addr
+            (0xE, 0xA) => {
+                /*
+                3 Byte
+                If P  set then PC = addr
+                */
+
+                if self.p {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                } else {
+                    self.pc += 2;
+                    return;
+
+                }
+            }
+
             //XCHG
             (0xE, 0xB) => {
                 /*
@@ -1226,6 +3570,102 @@ impl CPU {
 
                 self.l = self.e;
                 self.e = xchng_byte;
+            }
+
+            //CPE addr
+            (0xE, 0xC) => {
+                /*
+                3 Bytes
+                If P not set, CALL addr
+                */
+
+                if self.p {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
+            }
+            
+            //*CALL
+            (0xE, 0xD) => {
+                /*
+                3 Byte
+                (SP-1) = PC.high, (SP-2)= PC.lo, SP = SP-2, PC=addr
+                Subroutine Call
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+            }
+
+            //XRI D8
+            (0xE, 0xE) => {
+                /*
+                2 Byte
+                Immediate ^ accumulator
+                */
+                let answer =self.a ^ self.ram[self.pc as usize];
+                
+                self.cy = false; //Carry bit is reset; 
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                
+
+                self.a = answer;
+                self.pc += 1;
+            }
+
+            //RST 5
+            (0xE, 0xF) => {
+                /*
+                1 Byte
+                CALL $28
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x28;
+
+            }
+            
+            //RP
+            (0xF, 0) => {
+                /*
+                1 Byte
+                If S not set (Positive), RET
+                */
+
+                if self.s == false {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
             }
 
             //POP PSW
@@ -1246,6 +3686,53 @@ impl CPU {
 
                 self.sp += 2;
 
+            }
+
+            //JP addr
+            (0xF, 2) => {
+                /*
+                3 Byte
+                If s not set (Positive) then PC = addr
+                */
+
+                if self.s == false {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                } else {
+                    self.pc += 2;
+                    return;
+
+                }
+            }
+
+            //DI
+            (0xF, 3) => {
+                println!("Disabling interrupts attempted: {}", op);
+                return;
+            }  
+
+            //CP addr
+            (0xF, 4) => {
+                /*
+                3 Bytes
+                If S not set (Positive), CALL addr
+                */
+
+                if self.s == false {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
             }
 
             //PUSH PSW
@@ -1272,12 +3759,139 @@ impl CPU {
                 self.sp -= 2;
             }
 
+            //ORI D8
+            (0xF, 6) => {
+                /*
+                2 Byte
+                Accumulator | Immediate
+                */
+                let answer =self.a | self.ram[self.pc as usize];
+                
+                self.cy = false; //Carry bit is reset; 
+                self.z = answer == 0;
+                self.s = (answer & 0x80) != 0;
+                self.p = answer.count_ones() % 2 == 0;
+                
+
+                self.a = answer;
+                self.pc += 1;
+            }
+
+            //RST 6
+            (0xF, 7) => {
+                /*
+                1 Byte
+                CALL $30
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x30;
+
+            }
+
+            //RM
+            (0xF, 8) => {
+                /*
+                1 Byte
+                If S is set, RET
+                */
+
+                if self.s {
+                    let low_byte = self.ram[self.sp as usize] as u16;
+                    let high_byte = self.ram[(self.sp + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                    self.sp += 2;
+                }
+                else {
+                    return;
+                }
+            }
+
+            //SPHL
+            (0xF, 9) => {
+                /*
+                1 Byte
+                SP = HL
+                */
+
+                let hl_16 = ((self.h as u16) << 8) | self.l as u16;
+
+                self.sp = hl_16;
+
+            }
+
+            //JM addr
+            (0xF, 0xA) => {
+                /*
+                3 Byte
+                If S set (Minus) then PC = addr
+                */
+
+                if self.s {
+                    let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
+                    self.pc = addr;
+                } else {
+                    self.pc += 2;
+                    return;
+
+                }
+            }
+
             //EI
             (0xF, 0xB) => {
                 println!("Enabling interrupts attempted: {}", op);
                 return;
             }
 
+            //CM addr
+            (0xF, 0xC) => {
+                /*
+                3 Bytes
+                If S is set (Minus), CALL addr
+                */
+
+                if self.s {
+                    self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                    self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                    
+                    self.sp -= 2;
+
+                    let low_byte = self.ram[self.pc as usize] as u16;
+                    let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                    self.pc = (high_byte << 8) | low_byte;
+                }
+                else {
+                    return;
+                }
+                
+            }
+
+            //*CALL
+            (0xF, 0xD) => {
+                /*
+                3 Byte
+                (SP-1) = PC.high, (SP-2)= PC.lo, SP = SP-2, PC=addr
+                Subroutine Call
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                self.pc = (high_byte << 8) | low_byte;
+
+            }
+          
             //CPI D8
             (0xF, 0xE) => {
                 /*
@@ -1296,6 +3910,21 @@ impl CPU {
                 self.pc += 1;
             }
 
+            //RST 7
+            (0xF, 0xF) => {
+                /*
+                1 Byte
+                CALL $38
+                */
+
+                self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
+                self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
+                
+                self.sp -= 2;
+
+                self.pc = 0x38;
+
+            }
 
             (_, _) => {
                 //Debug Ram Output
