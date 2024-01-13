@@ -1,13 +1,14 @@
+use core::panic;
 use std::fs::File;
-use std::io::{Result, Write};
+use std::io::Write;
 
-const RAM_SIZE:usize = 65536;
+const RAM_SIZE:usize = 65536; //64 KiB
 pub struct CPU {
     pub pc:u16, // Program Counter
     pub sp:u16, // Stack Pointer
     pub ram:[u8; RAM_SIZE],
     //Registers
-    a:u8, //Primary Accumulator
+    pub a:u8, //Primary Accumulator
     b:u8,
     c:u8,
     d:u8,
@@ -20,6 +21,15 @@ pub struct CPU {
     p:bool, // Parity bit, set if number of 1 bits in res is even
     cy:bool, // Carry bit  
     ac:bool, // Aux carry
+    pub int_enabled:bool, // Interrupt bit
+
+    cycles:u32,
+
+    //IO API (TODO)
+    //try_input:bool,
+    //try_output:bool,
+    //in_port:u8,
+    //out_port:u8,
 }
 
 impl CPU {
@@ -40,6 +50,12 @@ impl CPU {
             p:false,
             cy:false,
             ac:false,
+            int_enabled:true,
+            cycles: 0,
+            //try_input:false,
+            //try_output:false,
+            //in_port:0,
+            //out_port:0,
         };
 
 
@@ -62,6 +78,16 @@ impl CPU {
         self.p = false;
         self.cy = false;
         self.ac = false;
+        self.int_enabled = false;
+        self.cycles = 0;
+        //self.try_input = false;
+        //self.try_output = false;
+        //self.in_port = 0;
+        //self.out_port = 0;
+    }
+
+    pub fn init_start_addr(&mut self, start_addr:u16) {
+        self.pc = start_addr;
     }
 
     pub fn tick(&mut self) {
@@ -101,7 +127,7 @@ impl CPU {
         
 
 
-        print!("AF-{:x} BC-{:x} DE-{:x} HL-{:x} PC-{:x} SP-{:x} OP-{:x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, op, flags[0], flags[1], flags[2], 
+        print!("AF-{:04x} BC-{:04x} DE-{:04x} HL-{:04x} PC-{:04x} SP-{:04x} OP-{:02x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, op, flags[0], flags[1], flags[2], 
         flags[3], flags[4]);
     }
 
@@ -151,8 +177,6 @@ impl CPU {
     fn execute(&mut self, op:u8) {
         let digit_1 = (op & 0xF0) >> 4;
         let digit_2 = op & 0x0F;
-        
-        // Parity Bit optimizaion to implement (GPT3.5) - self.p = answer.count_ones() & 1 == 0;
 
         match (digit_1, digit_2) {
             // NOP
@@ -209,7 +233,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.b & 0x0F) < (answer.0 & 0x0F);
 
                 self.b = answer.0;
             }
@@ -226,7 +250,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = answer.0 & 0x80 != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.b & 0x0F) > (answer.0 & 0x0F);
 
                 self.b = answer.0;
 
@@ -254,11 +278,8 @@ impl CPU {
                 */
 
                 self.cy = (self.a & 0x80) != 0;
-                self.a = self.a << 1;
 
-                self.a |= self.cy as u8;
-
-
+                self.a = self.a.rotate_left(1);
             }
 
             //*NOP (should not be used, alt opcode)
@@ -311,7 +332,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.c & 0x0F) < (answer.0 & 0x0F);
 
                 self.c = answer.0;
             }
@@ -328,7 +349,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.c & 0x0F) > (answer.0 & 0x0F);
 
                 self.c = answer.0;
             }
@@ -353,11 +374,10 @@ impl CPU {
                 1 Byte
                 Rotate Accumulator Right, sets CY to LMB shits A by 1 and concats CY to A
                 */
-                self.cy = (self.a & 0x01) != 0;
 
-                self.a = self.a >> 1;
+                self.cy = (self.a & 1) != 0;
 
-                self.a |= (self.cy as u8) >> 7;
+                self.a = self.a.rotate_right(1);
 
             }
 
@@ -416,7 +436,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.d & 0x0F) < (answer.0 & 0x0F);
 
                 self.d = answer.0;
             }
@@ -433,7 +453,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.d & 0x0F) > (answer.0 & 0x0F);
 
                 self.d = answer.0;
             }
@@ -459,11 +479,11 @@ impl CPU {
                 Rotates Accumulator left through carry
                 */
 
-                let carry_bit = self.cy;
+                let carry_bit = self.a & 0x80 != 0;
 
-                self.cy = self.a & 0x80 == 1;
+                self.a = (self.a << 1) | (self.cy as u8);
 
-                self.a = (self.a << 1) | (carry_bit as u8);
+                self.cy = carry_bit
 
             }
 
@@ -487,7 +507,7 @@ impl CPU {
                 self.l = answer as u8;
             }
 
-             //LDAX D
+            //LDAX D
             (1, 0xA) => {
                 /*
                 1 Byte
@@ -517,7 +537,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.e & 0x0F) < (answer.0 & 0x0F);
 
                 self.e = answer.0;
             }
@@ -534,7 +554,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.e & 0x0F) > (answer.0 & 0x0F);
 
                 self.e = answer.0;
             }
@@ -560,11 +580,11 @@ impl CPU {
                 Rotates Accumulator right through carry
                 */
 
-                let carry_bit = self.cy;
+                let carry_bit = self.a & 1 != 0;
 
-                self.cy = self.a & 0x1 == 1;
+                self.a = (self.a >> 1) | ((self.cy as u8) << 7);
 
-                self.a = (self.a >> 1) | ((carry_bit as u8) << 7);
+                self.cy = carry_bit;
 
             }
 
@@ -590,18 +610,19 @@ impl CPU {
             (2, 2) => {
                 /*
                 3 Byte
-                Stores L at (Byte 2) and H at (Byte 2) + 1
+                Stores L at (Address) and H at (Address) + 1
                 */
 
-                let addr = self.ram[self.pc as usize] as usize;
+                let low_byte = self.ram[self.pc as usize];
+                let high_byte = self.ram[(self.pc + 1)  as usize];
 
-                self.ram[addr] = self.l;
-                if addr + 1  <= RAM_SIZE {
-                    self.ram[addr + 1] = self.h;
-                    self.pc += 2;
-                } 
-                else {
-                panic!("SHLD Acessing Nonexistant Memory Addr!")};
+                let addr = (high_byte as u16) << 8 | low_byte as u16;
+
+                self.ram[addr as usize] = self.l;
+                self.ram[(addr + 1) as usize] = self.h;
+                self.pc += 2;
+
+                //TODO Implement Overflow Check
                 
             }
 
@@ -629,7 +650,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.h & 0x0F) < (answer.0 & 0x0F);
 
                 self.h = answer.0;
             }
@@ -646,7 +667,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.h & 0x0F) > (answer.0 & 0x0F);
 
                 self.h = answer.0;
             }
@@ -673,23 +694,27 @@ impl CPU {
                 Method as for i8080 manual
                 */
                 
-                let mut ls_nibble = self.a & 0x0F;
-                let mut ms_nibble = self.a >> 4;
 
-                if ls_nibble > 9 || self.cy { //ls_nibble is checked to see if greater than 9 or CY flag is set
-                    ls_nibble = ls_nibble.wrapping_add(6); // 6 is added to ls_nibble
-                    self.cy = ls_nibble > 15; // CY flag is set if carry is present
+                let mut ls_nibble = self.a & 0x0F;
+
+                if self.ac || ls_nibble >= 10  { //ls_nibble is checked to see if greater than 9 or CY flag is set
+                    self.a += 6; // 6 is added to ls_nibble
+
+                    self.ac = (self.a & 0xF) < ls_nibble ; // AC flag is set if carry is present
                 }
 
-                if ms_nibble > 9 || self.ac { // ms_nibble is checked to see if greater than 9 or AC flag is set
-                    ms_nibble = ms_nibble.wrapping_add(6); // 6 is added to ms_nibble
-                    self.ac = ms_nibble > 15; // AC flag is set if carry is present
+                ls_nibble = self.a & 0x0F;
+                let mut ms_nibble = (self.a >> 4) & 0xF;
+
+                if self.cy || ms_nibble > 9 { // ms_nibble is checked to see if greater than 9 or AC flag is set
+                    ms_nibble += 6; // 6 is added to ms_nibble
+                    self.cy = (self.a & 0xF) < ms_nibble; // AC flag is set if carry is present
                 }
 
                 self.a = (ms_nibble << 4) | ls_nibble; // Nibbles are merged after computing
 
                 // Other Flags are set
-                self.z = (self.a & 0xFF) == 0;
+                self.z = self.a == 0;
                 self.s = (self.a & 0x80) != 0;
                 self.p = (self.a.count_ones() % 2) == 0;
 
@@ -718,11 +743,17 @@ impl CPU {
             (2, 0xA) => {
                 /*
                 3 Byte
-                Stores (Byte 2) at L and (Byte 3) at H
+                Stores (Address) at L and (Adresss + 1) at H
                 */
 
-                self.l = self.ram[self.pc as usize];
-                self.h = self.ram[(self.pc + 1) as usize];
+                let low_byte = self.ram[self.pc as usize];
+                let high_byte = self.ram[(self.pc + 1)  as usize];
+
+                let addr = (high_byte as u16) << 8 | low_byte as u16;
+
+
+                self.l = self.ram[addr as usize];
+                self.h = self.ram[(addr + 1) as usize];
 
                 self.pc += 2;
             }
@@ -748,7 +779,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.l & 0x0F) < (answer.0 & 0x0F);
 
                 self.l = answer.0;
             }
@@ -764,7 +795,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = !answer.1;
+                self.ac = (self.l & 0x0F) > (answer.0 & 0x0F);
 
                 self.l = answer.0;
             }
@@ -809,18 +840,18 @@ impl CPU {
 
             }
 
-            //STA , A16
+            //STA , D16
             (3, 2) => {
                 /*
                 3 Byte instruction, (OP/L-Byte/H-Byte)
                 3 MCycles Op Fetch/Mem Read/Mem Read
                 Stores A in two byte addr
                 */
-                let low_byte = self.ram[self.pc as usize] as u16;
-                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
-                let addr = ((high_byte << 8) | low_byte) as usize;
+                let low_byte = self.ram[self.pc as usize];
+                let high_byte = self.ram[(self.pc + 1) as usize];
+                let addr = (high_byte as u16) << 8 | low_byte as  u16;
 
-                self.ram[addr] = self.a;
+                self.ram[addr as usize] = self.a;
                 self.pc += 2;
 
             }
@@ -847,12 +878,12 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.ram[addr as usize] & 0x0F) < (answer.0 & 0x0F);
 
                 self.ram[addr as usize] = answer.0;
             }
 
-            //INR M
+            //DCR M
             (3, 5) => {
                 /*
                 1 Byte
@@ -865,7 +896,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.ram[addr as usize] & 0x0F) > (answer.0 & 0x0F);
 
                 self.ram[addr as usize] = answer.0;
             }
@@ -926,7 +957,7 @@ impl CPU {
                 let high_byte:u8 = self.ram[(self.pc + 1) as usize]; 
 
                 let addr:u16 = ((high_byte as u16) << 8) | (low_byte as u16);
-                self.ram[addr as usize] = self.a; 
+                self.a = self.ram[addr as usize]; 
 
                 self.pc += 2;
             }
@@ -951,7 +982,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
 
                 self.a = answer.0;
             }
@@ -966,7 +997,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
 
                 self.a = answer.0;
             }
@@ -975,7 +1006,7 @@ impl CPU {
             (3, 0xE) => {
                 /*
                 2 Byte
-                Moves (byte 2) to L                
+                Moves (byte 2) to A               
                 */
                 let byte_2 = self.ram[(self.pc) as usize];
 
@@ -1587,6 +1618,16 @@ impl CPU {
                 self.a = self.b;
             }
 
+            //MOV A, B
+            (7, 9) => {
+                /*
+                1 Byte
+                Moves C to A
+                */
+
+                self.a = self.c;
+            }
+
             //MOV A, D
             (7, 0xA) => {
                 /*
@@ -1615,6 +1656,16 @@ impl CPU {
                 */
 
                 self.a = self.h;
+            }
+
+            //MOV A, L
+            (7, 0xD) => {
+                /*
+                1 Byte
+                Moves data from L to A
+                */
+
+                self.a = self.l;
             }
 
             //MOV A, M
@@ -1650,7 +1701,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1668,7 +1719,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1686,7 +1737,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1704,7 +1755,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1722,7 +1773,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1740,7 +1791,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1760,7 +1811,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1778,7 +1829,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1795,10 +1846,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.b);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.b & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1815,10 +1868,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.c);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.c & 0x0F) + (self.cy as u8);
+                
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1835,10 +1890,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.d);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.d & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1855,10 +1912,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.e);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.e & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1875,10 +1934,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.h);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.h & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1895,10 +1956,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.l);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.l & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1917,10 +1980,12 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_add(self.ram[addr as usize]);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.ram[addr as usize] & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1931,16 +1996,18 @@ impl CPU {
             (8, 0xF) => {
                 /*
                 1 Byte
-                Adds E + A + CY, Flags - Z, S, P, CY, AC 
+                Adds A + A + CY, Flags - Z, S, P, CY, AC 
                 */
 
                 let (answer, carry) = self.a.overflowing_add(self.a);
                 let (carry_answer, carry_2) = answer.overflowing_add(self.cy as u8);
 
+                let sum_low_nibble = (self.a & 0x0F) + (self.a & 0x0F) + (self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
+                self.ac = sum_low_nibble > 0x0F;
                 self.cy = carry || carry_2;
 
                 self.a = carry_answer;
@@ -1958,7 +2025,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1976,7 +2043,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -1994,7 +2061,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2012,7 +2079,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2030,7 +2097,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2048,7 +2115,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2068,7 +2135,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2086,7 +2153,7 @@ impl CPU {
                 self.z = answer.0 == 0;
                 self.s = (answer.0 & 0x80) != 0;
                 self.p = answer.0.count_ones() % 2 == 0;
-                self.ac = answer.1;
+                self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
                 self.cy = answer.1;
 
                 self.a = answer.0;
@@ -2103,11 +2170,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.b);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.b & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2123,11 +2192,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.c);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.c & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2143,11 +2214,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.d);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.d & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2163,11 +2236,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.e);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.e & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2183,11 +2258,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.h);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.h & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2203,11 +2280,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.l);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.l & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2225,11 +2304,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.ram[addr as usize]);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.ram[addr as usize] & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2245,11 +2326,13 @@ impl CPU {
                 let (answer, carry) = self.a.overflowing_sub(self.a);
                 let (carry_answer, carry_2) = answer.overflowing_sub(self.cy as u8);
 
+                let diff_low_nibble = (self.a & 0x0F).wrapping_sub(self.a & 0x0F).wrapping_sub(self.cy as u8);
+
                 self.z = carry_answer == 0;
                 self.s = (carry_answer & 0x80) != 0;
                 self.p = carry_answer.count_ones() % 2 == 0;
-                self.ac = carry || carry_2;
                 self.cy = carry || carry_2;
+                self.ac = diff_low_nibble > (self.a & 0x0F) || (self.cy && (self.a & 0x0F) == 0);
 
                 self.a = carry_answer;
 
@@ -2700,12 +2783,12 @@ impl CPU {
                 Sets Flags based on comparison of A and B
                 */
 
-                let answer = self.a.wrapping_sub(self.b);
+                let (answer, carry) = self.a.overflowing_sub(self.b);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.b;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.b & 0x0F);
             }
 
@@ -2716,12 +2799,12 @@ impl CPU {
                 Sets Flags based on comparison of A and C
                 */
 
-                let answer = self.a.wrapping_sub(self.c);
+                let (answer, carry) = self.a.overflowing_sub(self.c);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.c;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.c & 0x0F);
             }
 
@@ -2732,12 +2815,12 @@ impl CPU {
                 Sets Flags based on comparison of A and D
                 */
 
-                let answer = self.a.wrapping_sub(self.d);
+                let (answer, carry) = self.a.overflowing_sub(self.d);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.d;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.d & 0x0F);
             }
 
@@ -2748,12 +2831,12 @@ impl CPU {
                 Sets Flags based on comparison of A and E
                 */
 
-                let answer = self.a.wrapping_sub(self.e);
+                let (answer, carry) = self.a.overflowing_sub(self.e);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.e;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.e & 0x0F);
             }
 
@@ -2764,12 +2847,12 @@ impl CPU {
                 Sets Flags based on comparison of A and H
                 */
 
-                let answer = self.a.wrapping_sub(self.h);
+                let (answer, carry) = self.a.overflowing_sub(self.h);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.h;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.h & 0x0F);
             }
 
@@ -2780,12 +2863,12 @@ impl CPU {
                 Sets Flags based on comparison of A and L
                 */
 
-                let answer = self.a.wrapping_sub(self.l);
+                let (answer, carry) = self.a.overflowing_sub(self.l);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.l;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.l & 0x0F);
             }
 
@@ -2798,13 +2881,13 @@ impl CPU {
 
                 let addr = ((self.h as u16) << 8) | self.l as u16;
 
-                let answer = self.a.wrapping_sub(self.ram[addr as usize]);
+                let (answer, carry) = self.a.overflowing_sub(self.ram[addr as usize]);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < self.l;
-                self.ac = (self.a & 0x0F) < (self.l & 0x0F);
+                self.cy = carry;
+                self.ac = (self.a & 0x0F) < (self.ram[addr as usize] & 0x0F);
             }
 
             //CPM A
@@ -2814,13 +2897,13 @@ impl CPU {
                 Sets Flags based on comparison of A and A
                 */
 
-                let answer = self.a.wrapping_sub(self.a);
+                let (answer, carry) = self.a.overflowing_sub(self.a);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < answer;
-                self.ac = (self.a & 0x0F) < (answer & 0x0F);
+                self.cy = carry;
+                self.ac = (self.a & 0x0F) < (self.a & 0x0F);
             }
             
             //RNZ
@@ -2901,7 +2984,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;                   
                 }
                 
             }
@@ -3037,7 +3120,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
             }
 
@@ -3049,15 +3132,37 @@ impl CPU {
                 Subroutine Call
                 */
 
+                let low_byte = self.ram[self.pc as usize] as u16;
+                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+
+                let address = (high_byte << 8) | low_byte;
+
+                #[cfg(feature = "cpudiag")]
+                if address == 5 {
+                    if self.c == 9 {
+                        let offset = ((self.d as u16) << 8) | self.e as u16;
+                        let mut str:u8 = 0;
+                        let mut count = 0;
+                        while str != ('$' as u8) {
+                            str = self.ram[(offset + 3 + count) as usize];
+                            print!("{}", str as char);
+                            count += 1;
+                        }
+                        print!("\n");
+                        ::std::process::exit(0)
+
+                    } else if address == 0 {
+                        ::std::process::exit(0)
+                    }
+                }
+
                 self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
                 self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
                 
                 self.sp -= 2;
 
-                let low_byte = self.ram[self.pc as usize] as u16;
-                let high_byte = self.ram[(self.pc + 1) as usize] as u16;
+                self.pc = address;
 
-                self.pc = (high_byte << 8) | low_byte;
             }
 
             //ACI D8
@@ -3149,7 +3254,9 @@ impl CPU {
 
             //OUT D8
             (0xD, 3) => {
-                println!("Output Attempted {}", op);
+                
+                //TODO - Implement output api
+
                 self.pc += 1;
             }
 
@@ -3172,7 +3279,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3208,6 +3315,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.pc += 1;
             }
 
             //RST 2
@@ -3278,8 +3386,17 @@ impl CPU {
 
             //IN D8
             (0xD, 0xB) => {
-                println!("Input Attempted {}", op);
-                self.pc += 1;
+                /*
+                2 Byte
+                Write A with input from bort 2nd Byte
+                */
+                
+                //TODO: Implement API
+
+                /* self.try_input = true;
+                self.in_port = self.ram[self.pc as usize];
+                
+                self.pc += 1; */
             }
 
             //CC addr
@@ -3301,7 +3418,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3423,7 +3540,7 @@ impl CPU {
                 let mut xchng_byte = self.h;
 
                 self.h = self.ram[(self.sp + 1) as usize];
-                self.ram[self.sp as usize] = xchng_byte;
+                self.ram[(self.sp + 1) as usize] = xchng_byte;
 
                 xchng_byte = self.l;
 
@@ -3451,7 +3568,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3576,7 +3693,7 @@ impl CPU {
             (0xE, 0xC) => {
                 /*
                 3 Bytes
-                If P not set, CALL addr
+                If P set, CALL addr
                 */
 
                 if self.p {
@@ -3591,7 +3708,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3676,11 +3793,11 @@ impl CPU {
                 */
 
                 let flag_val = self.ram[self.sp as usize];
-                self.s = flag_val & 0x80 == 1;
-                self.z = flag_val & 0x40 == 1;
-                self.ac = flag_val & 0x8 == 1;
-                self.p = flag_val & 0x4 == 1;
-                self.cy = flag_val & 0x1 == 1;
+                self.s = (flag_val & 0x80) != 0;
+                self.z = (flag_val & 0x40) != 0;
+                self.ac = (flag_val & 0x8) != 0;
+                self.p = (flag_val & 0x4) != 0;
+                self.cy = (flag_val & 0x1) != 0;
 
                 self.a = self.ram[(self.sp + 1) as usize];
 
@@ -3707,8 +3824,7 @@ impl CPU {
 
             //DI
             (0xF, 3) => {
-                println!("Disabling interrupts attempted: {}", op);
-                return;
+                self.int_enabled = false;
             }  
 
             //CP addr
@@ -3730,7 +3846,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3746,15 +3862,15 @@ impl CPU {
                 let flag_vec:Vec<bool> = vec![self.s, self.z, false, self.ac, false, self.p, true, self.cy];
 
 
-                for (i, &flag) in flag_vec.iter().enumerate() {
-                    if flag {
+                for (i, flag) in flag_vec.iter().enumerate() {
+                    if *flag {
                         flag_value |= 1 << (7 - i); //0xb1 is shifted by (7- i) places to set bit, bit it OR'ed to flag value;
                     }
                 }
                 
-                self.ram[self.sp as usize] = flag_value;
+                self.ram[(self.sp - 1) as usize] = self.a;
 
-                self.ram[(self.sp + 1) as usize] = self.a;
+                self.ram[(self.sp - 2) as usize] = flag_value;
 
                 self.sp -= 2;
             }
@@ -3844,8 +3960,7 @@ impl CPU {
 
             //EI
             (0xF, 0xB) => {
-                println!("Enabling interrupts attempted: {}", op);
-                return;
+                self.int_enabled = true;
             }
 
             //CM addr
@@ -3867,7 +3982,7 @@ impl CPU {
                     self.pc = (high_byte << 8) | low_byte;
                 }
                 else {
-                    return;
+                    self.pc += 2;
                 }
                 
             }
@@ -3899,12 +4014,12 @@ impl CPU {
                 Sets Flags based on comparison of A and data
                 */
                 let immediate = self.ram[self.pc as usize];
-                let answer = self.a.wrapping_sub(immediate);
+                let (answer, carry) = self.a.overflowing_sub(immediate);
 
                 self.z = answer == 0;
                 self.s = (answer & 0x80) != 0;
                 self.p = answer.count_ones() % 2 == 0;
-                self.cy = self.a < immediate;
+                self.cy = carry;
                 self.ac = (self.a & 0x0F) < (immediate & 0x0F);
 
                 self.pc += 1;
@@ -3927,31 +4042,18 @@ impl CPU {
             }
 
             (_, _) => {
-                //Debug Ram Output
-                let example_array: Vec<u8> = self.ram.into_iter().collect();
-                let output_filename = "output.txt";
-                if let Err(err) = array_to_hex_file(&example_array, output_filename) {
-                    eprintln!("Error: {}", err);
-                } else {
-                    println!("Array written to {}", output_filename);
-                }
                 
-                panic!("Unimplemented opcode: {}", op)},
+                #[cfg(feature = "debug")]
+                write_to_file(&self.ram).unwrap();
+                
+                panic!("Unimplemented opcode: {:02x}", op)},
         }
     }
 }
 
-// Debug Ram Output Func
-fn array_to_hex_file(array: &[u8], filename: &str) -> Result<()> {
-    let mut file = File::create(filename)?;
-
-    for chunk in array.chunks(16) {
-        for &value in chunk {
-            // Format as two-digit hex and write to the file
-            write!(file, "{:02X} ", value)?;
-        }
-        writeln!(file)?;
-    }
-
+#[cfg(feature = "debug")]
+fn write_to_file(data: &[u8]) -> std::io::Result<()> {
+    let mut file = File::create("ram_output.txt")?;
+    file.write_all(data)?;
     Ok(())
 }
