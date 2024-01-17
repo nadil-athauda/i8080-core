@@ -9,12 +9,12 @@ pub struct CPU {
     pub ram:[u8; RAM_SIZE],
     //Registers
     pub a:u8, //Primary Accumulator
-    b:u8,
-    c:u8,
-    d:u8,
-    e:u8,
-    h:u8,
-    l:u8,
+    pub b:u8,
+    pub c:u8,
+    pub d:u8,
+    pub e:u8,
+    pub h:u8,
+    pub l:u8,
     // Flags
     s:bool, // Sign bit, set if result neg
     z:bool, // Zero bit, set if res zero
@@ -22,14 +22,14 @@ pub struct CPU {
     cy:bool, // Carry bit  
     ac:bool, // Aux carry
     pub int_enabled:bool, // Interrupt bit
-
-    cycles:u32,
+    pub last_interrupt:u8,
+    pub cycles:u32,
 
     //IO API (TODO)
     //try_input:bool,
     //try_output:bool,
     //in_port:u8,
-    //out_port:u8,
+    pub out_port:u8,
 }
 
 impl CPU {
@@ -51,11 +51,12 @@ impl CPU {
             cy:false,
             ac:false,
             int_enabled:true,
+            last_interrupt:16,
             cycles: 0,
             //try_input:false,
             //try_output:false,
             //in_port:0,
-            //out_port:0,
+            out_port:255,
         };
 
 
@@ -79,11 +80,12 @@ impl CPU {
         self.cy = false;
         self.ac = false;
         self.int_enabled = false;
+        self.last_interrupt = 16;
         self.cycles = 0;
         //self.try_input = false;
         //self.try_output = false;
         //self.in_port = 0;
-        //self.out_port = 0;
+        self.out_port = 255;
     }
 
     pub fn init_start_addr(&mut self, start_addr:u16) {
@@ -97,7 +99,7 @@ impl CPU {
         self.execute(op);
     }
 
-    pub fn debug_tick (&mut self) {
+    pub fn debug_tick (&mut self) -> String {
         //Fetch & Decode
         let op:u8 = self.fetch();
         //Execute
@@ -127,8 +129,10 @@ impl CPU {
         
 
 
-        print!("AF-{:04x} BC-{:04x} DE-{:04x} HL-{:04x} PC-{:04x} SP-{:04x} OP-{:02x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, op, flags[0], flags[1], flags[2], 
+        let output = format!("AF-{:04x} BC-{:04x} DE-{:04x} HL-{:04x} PC-{:04x} SP-{:04x} (SP)-{:04x} OP-{:02x} Flags-{}{}{}{}{}", af, bc, de, hl, self.pc, self.sp, self.ram[self.sp as usize], op, flags[0], flags[1], flags[2], 
         flags[3], flags[4]);
+
+        output
     }
 
     pub fn gui_debug_tick (&mut self) -> (Vec<u16>, Vec<&str>){
@@ -164,7 +168,8 @@ impl CPU {
         self.ram[0..end].copy_from_slice(data);
     }
 
-    pub fn load_to(&mut self, data:&[u8], start:usize, end:usize) {
+    pub fn load_from(&mut self, data:&[u8], start:usize) {
+        let end = data.len() + start;
         self.ram[start..end].copy_from_slice(data);
     }
 
@@ -180,7 +185,10 @@ impl CPU {
 
         match (digit_1, digit_2) {
             // NOP
-            (0, 0) => return,
+            (0, 0) => {
+                self.cycles += 4;
+                return
+            },
             
             //LXI B, D16
             (0, 1) => {
@@ -193,8 +201,9 @@ impl CPU {
                 
                 self.c = low_byte;
                 self.b = high_byte;
-                self.pc += 2;
 
+                self.pc += 2;
+                self.cycles += 10;
             }
             
             //STAX B
@@ -208,6 +217,8 @@ impl CPU {
                 let addr = (high_byte << 8) | low_byte;
 
                 self.ram[addr as usize] = self.a;
+
+                self.cycles += 7;
             }
 
             //INX B
@@ -221,6 +232,8 @@ impl CPU {
                 
                 self.b = (bc >> 8) as u8;
                 self.c = bc as u8;
+
+                self.cycles += 5;
             }
 
             //INR B
@@ -236,6 +249,8 @@ impl CPU {
                 self.ac = (self.b & 0x0F) < (answer.0 & 0x0F);
 
                 self.b = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR B
@@ -254,6 +269,7 @@ impl CPU {
 
                 self.b = answer.0;
 
+                self.cycles += 5;
             }
 
             //MVI B, D8
@@ -267,7 +283,7 @@ impl CPU {
                 self.b = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //RLC
@@ -280,10 +296,15 @@ impl CPU {
                 self.cy = (self.a & 0x80) != 0;
 
                 self.a = self.a.rotate_left(1);
+
+                self.cycles += 4;
             }
 
             //*NOP (should not be used, alt opcode)
-            (0, 8) => return,
+            (0, 8) => {
+                self.cycles += 4;
+                return
+            },
 
             //DAD B
             (0, 9) => {
@@ -300,6 +321,8 @@ impl CPU {
 
                 self.h = (answer >> 8) as u8;
                 self.l = answer as u8;
+
+                self.cycles += 10;
             }
 
             //LDAX B
@@ -310,6 +333,8 @@ impl CPU {
                 */
                 let addr:u16 = ((self.b as u16) << 8) | (self.c as u16);
                 self.a = self.ram[addr as usize]; 
+
+                self.cycles += 7;
             }
 
             //DCX B
@@ -318,8 +343,15 @@ impl CPU {
                 1 Byte
                 Decrements Register Pair
                 */
-                self.b = self.b.wrapping_sub(1);
-                self.c = self.c.wrapping_sub(1);
+
+                let mut bc_16:u16 = ((self.b as u16) << 8) | (self.c as u16);
+
+                bc_16 = bc_16.wrapping_sub(1);
+
+                self.b = (bc_16 >> 8) as u8;
+                self.c = bc_16 as u8;
+
+                self.cycles += 5;
             }
 
             //INR C
@@ -335,6 +367,8 @@ impl CPU {
                 self.ac = (self.c & 0x0F) < (answer.0 & 0x0F);
 
                 self.c = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR C
@@ -352,6 +386,8 @@ impl CPU {
                 self.ac = (self.c & 0x0F) > (answer.0 & 0x0F);
 
                 self.c = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI C, D8
@@ -365,7 +401,7 @@ impl CPU {
                 self.c = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //RRC
@@ -379,10 +415,14 @@ impl CPU {
 
                 self.a = self.a.rotate_right(1);
 
+                self.cycles += 4;
             }
 
             //*NOP (should not be used, alt opcode)
-            (1, 0) => return,
+            (1, 0) => {
+                self.cycles += 4;
+                return
+            },
 
             //LXI D, D16
             (1,1) => {
@@ -395,8 +435,9 @@ impl CPU {
                 
                 self.e = low_byte;
                 self.d = high_byte;
-                self.pc += 2;
 
+                self.pc += 2;
+                self.cycles += 10;
             }
 
             //STAX D
@@ -410,6 +451,8 @@ impl CPU {
                 let addr = (high_byte << 8) | low_byte;
 
                 self.ram[addr as usize] = self.a;
+
+                self.cycles += 7;
             }
 
             //INX D
@@ -424,6 +467,7 @@ impl CPU {
                 self.d = (de >> 8) as u8;
                 self.e = de as u8;
 
+                self.cycles += 5;
             }
 
             //INR D
@@ -439,6 +483,8 @@ impl CPU {
                 self.ac = (self.d & 0x0F) < (answer.0 & 0x0F);
 
                 self.d = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR D
@@ -456,6 +502,8 @@ impl CPU {
                 self.ac = (self.d & 0x0F) > (answer.0 & 0x0F);
 
                 self.d = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI D, D8
@@ -469,7 +517,7 @@ impl CPU {
                 self.d = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //RAL
@@ -483,12 +531,16 @@ impl CPU {
 
                 self.a = (self.a << 1) | (self.cy as u8);
 
-                self.cy = carry_bit
+                self.cy = carry_bit;
 
+                self.cycles += 4;
             }
 
             //*NOP
-            (1, 8) => return,
+            (1, 8) => {
+                self.cycles += 4;
+                return
+            },
 
             //DAD D
             (1, 9) => {
@@ -496,15 +548,17 @@ impl CPU {
                 1 Byte
                 Double Add DE + HL -> HL CY flag
                 */
-                let bc_16:u16 = ((self.d as u16) << 8) | (self.e as u16);
+                let de_16:u16 = ((self.d as u16) << 8) | (self.e as u16);
                 let hl_16:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
-                let (answer, carry) = bc_16.overflowing_add(hl_16);
+                let (answer, carry) = de_16.overflowing_add(hl_16);
 
                 self.cy = carry;
 
                 self.h = (answer >> 8) as u8;
                 self.l = answer as u8;
+
+                self.cycles += 10;
             }
 
             //LDAX D
@@ -515,6 +569,8 @@ impl CPU {
                 */
                 let addr:u16 = ((self.d as u16) << 8) | (self.e as u16);
                 self.a = self.ram[addr as usize]; 
+
+                self.cycles += 7;
             }
 
             //DCX D
@@ -523,8 +579,14 @@ impl CPU {
                 1 Byte
                 Decrements Register Pair
                 */
-                self.d = self.d.wrapping_sub(1);
-                self.e = self.e.wrapping_sub(1);
+                let mut de_16:u16 = ((self.d as u16) << 8) | (self.e as u16);
+
+                de_16 = de_16.wrapping_sub(1);
+
+                self.d = (de_16 >> 8) as u8;
+                self.e = de_16 as u8;
+
+                self.cycles += 5;
             }
 
             //INR E
@@ -540,6 +602,8 @@ impl CPU {
                 self.ac = (self.e & 0x0F) < (answer.0 & 0x0F);
 
                 self.e = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR E
@@ -557,6 +621,8 @@ impl CPU {
                 self.ac = (self.e & 0x0F) > (answer.0 & 0x0F);
 
                 self.e = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI E, D8
@@ -570,7 +636,7 @@ impl CPU {
                 self.e = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //RAR
@@ -586,10 +652,14 @@ impl CPU {
 
                 self.cy = carry_bit;
 
+                self.cycles += 4;
             }
 
-            //NOP*
-            (2, 0) => return,
+            //*NOP
+            (2, 0) => {
+                self.cycles += 4;
+                return
+            },
 
             //LXI H, D16
             (2,1) => {
@@ -602,8 +672,9 @@ impl CPU {
                 
                 self.l = low_byte;
                 self.h = high_byte;
-                self.pc += 2;
 
+                self.pc += 2;
+                self.cycles += 10;
             }
 
             //SHLD adr
@@ -620,8 +691,10 @@ impl CPU {
 
                 self.ram[addr as usize] = self.l;
                 self.ram[(addr + 1) as usize] = self.h;
+                
                 self.pc += 2;
-
+                self.cycles += 16;
+                
                 //TODO Implement Overflow Check
                 
             }
@@ -638,6 +711,7 @@ impl CPU {
                 self.h = (hl >> 8) as u8;
                 self.l = hl as u8;
 
+                self.cycles += 5;
             }
 
             //INR H
@@ -653,6 +727,8 @@ impl CPU {
                 self.ac = (self.h & 0x0F) < (answer.0 & 0x0F);
 
                 self.h = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR H
@@ -670,6 +746,8 @@ impl CPU {
                 self.ac = (self.h & 0x0F) > (answer.0 & 0x0F);
 
                 self.h = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI H, D8
@@ -683,7 +761,7 @@ impl CPU {
                 self.h = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //DAA
@@ -718,10 +796,14 @@ impl CPU {
                 self.s = (self.a & 0x80) != 0;
                 self.p = (self.a.count_ones() % 2) == 0;
 
+                self.cycles += 4;
             }
 
             //*NOP
-            (2, 8) => return,
+            (2, 8) => {
+                self.cycles += 4;
+                return
+            },
 
             //DAD H
             (2, 9) => {
@@ -737,25 +819,28 @@ impl CPU {
 
                 self.h = (answer >> 8) as u8;
                 self.l = answer as u8;
+
+                self.cycles += 10;
             }
 
             //LHLD adr
             (2, 0xA) => {
                 /*
                 3 Byte
-                Stores (Address) at L and (Adresss + 1) at H
+                Loads (Address) at L and (Adresss + 1) at H
                 */
 
                 let low_byte = self.ram[self.pc as usize];
                 let high_byte = self.ram[(self.pc + 1)  as usize];
 
-                let addr = (high_byte as u16) << 8 | low_byte as u16;
+                let addr = ((high_byte as u16) << 8) | low_byte as u16;
 
 
                 self.l = self.ram[addr as usize];
                 self.h = self.ram[(addr + 1) as usize];
 
                 self.pc += 2;
+                self.cycles += 16;
             }
 
             //DCX H
@@ -764,8 +849,14 @@ impl CPU {
                 1 Byte
                 Decrements Register Pair
                 */
-                self.h = self.h.wrapping_sub(1);
-                self.l = self.l.wrapping_sub(1);
+                let mut hl_16:u16 = ((self.h as u16) << 8) | (self.l as u16);
+
+                hl_16 = hl_16.wrapping_sub(1);
+
+                self.h = (hl_16 >> 8) as u8;
+                self.l = hl_16 as u8;
+
+                self.cycles += 5;
             }
 
             //INR L
@@ -782,6 +873,8 @@ impl CPU {
                 self.ac = (self.l & 0x0F) < (answer.0 & 0x0F);
 
                 self.l = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR L
@@ -798,6 +891,8 @@ impl CPU {
                 self.ac = (self.l & 0x0F) > (answer.0 & 0x0F);
 
                 self.l = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI L, D8
@@ -811,7 +906,7 @@ impl CPU {
                 self.l = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //CMA
@@ -821,10 +916,15 @@ impl CPU {
                 Returns Ones compliment of accumulator
                 */
                 self.a = !self.a;
+
+                self.cycles += 4;
             }
 
             //*NOP
-            (3, 0) => return,
+            (3, 0) => {
+                self.cycles += 4;
+                return
+            },
 
             //LXI , D16
             (3, 1) => {
@@ -836,8 +936,9 @@ impl CPU {
                 let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                 self.sp = (high_byte << 8) | low_byte;
-                self.pc += 2;
 
+                self.pc += 2;
+                self.cycles += 10;
             }
 
             //STA , D16
@@ -852,8 +953,9 @@ impl CPU {
                 let addr = (high_byte as u16) << 8 | low_byte as  u16;
 
                 self.ram[addr as usize] = self.a;
+                
                 self.pc += 2;
-
+                self.cycles += 13;
             }
 
             //INX SP
@@ -863,6 +965,8 @@ impl CPU {
                 SP = SP + 1
                 */
                 self.sp += 1;
+
+                self.cycles += 5;
             }
 
             //INR M
@@ -881,6 +985,8 @@ impl CPU {
                 self.ac = (self.ram[addr as usize] & 0x0F) < (answer.0 & 0x0F);
 
                 self.ram[addr as usize] = answer.0;
+
+                self.cycles += 10;
             }
 
             //DCR M
@@ -899,6 +1005,8 @@ impl CPU {
                 self.ac = (self.ram[addr as usize] & 0x0F) > (answer.0 & 0x0F);
 
                 self.ram[addr as usize] = answer.0;
+
+                self.cycles += 10;
             }
 
             //MVI M, D8
@@ -914,7 +1022,7 @@ impl CPU {
                 self.ram[addr as usize] = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 10;
             }
 
             //STC
@@ -925,10 +1033,15 @@ impl CPU {
                 */
                 
                 self.cy = true;
+
+                self.cycles += 4;
             }
 
             //*NOP
-            (3, 8) => return,
+            (3, 8) => {
+                self.cycles += 4;
+                return
+            },
 
             //DAD SP
             (3, 9) => {
@@ -944,6 +1057,8 @@ impl CPU {
 
                 self.h = (answer >> 8) as u8;
                 self.l = answer as u8;
+
+                self.cycles += 10;
             }
 
             //LDA addr
@@ -970,6 +1085,8 @@ impl CPU {
                 */
                 
                 self.sp = self.sp.wrapping_sub(1);
+
+                self.cycles += 5;
             }
 
             //INR A
@@ -985,6 +1102,8 @@ impl CPU {
                 self.ac = (self.a & 0x0F) < (answer.0 & 0x0F);
 
                 self.a = answer.0;
+
+                self.cycles += 5;
             }
 
             //DCR A
@@ -1000,6 +1119,8 @@ impl CPU {
                 self.ac = (self.a & 0x0F) > (answer.0 & 0x0F);
 
                 self.a = answer.0;
+
+                self.cycles += 5;
             }
 
             //MVI A, D8
@@ -1013,7 +1134,7 @@ impl CPU {
                 self.a = byte_2;
 
                 self.pc += 1;
-
+                self.cycles += 7;
             }
 
             //CMC
@@ -1024,6 +1145,8 @@ impl CPU {
                 */
 
                 self.cy = !self.cy;
+
+                self.cycles += 4;
             }
 
             //MOV B, B
@@ -1034,6 +1157,8 @@ impl CPU {
                 */
 
                 self.b = self.b;
+
+                self.cycles += 5;
             }
             
             //MOV B, C
@@ -1044,6 +1169,8 @@ impl CPU {
                 */
 
                 self.b = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV B, D
@@ -1054,6 +1181,8 @@ impl CPU {
                 */
 
                 self.b = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV B, E
@@ -1064,6 +1193,8 @@ impl CPU {
                 */
 
                 self.b = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV B, H
@@ -1074,6 +1205,8 @@ impl CPU {
                 */
 
                 self.b = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV B, L
@@ -1084,6 +1217,8 @@ impl CPU {
                 */
 
                 self.b = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV B, M
@@ -1096,6 +1231,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.b = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV B, A
@@ -1106,6 +1243,8 @@ impl CPU {
                 */
 
                 self.b = self.a;
+
+                self.cycles += 5;
             }
 
             //MOV C, B
@@ -1116,6 +1255,8 @@ impl CPU {
                 */
 
                 self.c = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV C, C
@@ -1126,6 +1267,8 @@ impl CPU {
                 */
 
                 self.c = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV C, D
@@ -1136,6 +1279,8 @@ impl CPU {
                 */
 
                 self.c = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV C, E
@@ -1146,6 +1291,8 @@ impl CPU {
                 */
 
                 self.c = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV C, H
@@ -1156,6 +1303,8 @@ impl CPU {
                 */
 
                 self.c = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV C, L
@@ -1166,6 +1315,8 @@ impl CPU {
                 */
 
                 self.c = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV C, M
@@ -1178,6 +1329,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.c = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV C, A
@@ -1188,6 +1341,8 @@ impl CPU {
                 */
 
                 self.c = self.a;
+
+                self.cycles += 5;
             }
             
             //MOV D, B
@@ -1198,6 +1353,8 @@ impl CPU {
                 */
 
                 self.d = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV D, C
@@ -1208,6 +1365,8 @@ impl CPU {
                 */
 
                 self.d = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV D, D
@@ -1218,6 +1377,8 @@ impl CPU {
                 */
 
                 self.d = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV D, E
@@ -1228,6 +1389,8 @@ impl CPU {
                 */
 
                 self.d = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV D, H
@@ -1238,6 +1401,8 @@ impl CPU {
                 */
 
                 self.d = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV D, L
@@ -1248,6 +1413,8 @@ impl CPU {
                 */
 
                 self.d = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV D, M
@@ -1260,6 +1427,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.d = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV D, A
@@ -1270,6 +1439,8 @@ impl CPU {
                 */
 
                 self.d = self.a;
+
+                self.cycles += 5;
             }
 
             //MOV E, B
@@ -1280,6 +1451,8 @@ impl CPU {
                 */
 
                 self.e = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV E, C
@@ -1290,6 +1463,8 @@ impl CPU {
                 */
 
                 self.e = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV E, D
@@ -1300,6 +1475,8 @@ impl CPU {
                 */
 
                 self.e = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV E, E
@@ -1310,6 +1487,8 @@ impl CPU {
                 */
 
                 self.e = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV E, H
@@ -1320,6 +1499,8 @@ impl CPU {
                 */
 
                 self.e = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV E, L
@@ -1330,6 +1511,8 @@ impl CPU {
                 */
 
                 self.e = self.l;
+
+                self.cycles += 5;
             }
 
 
@@ -1343,6 +1526,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.e = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV E, A
@@ -1353,6 +1538,8 @@ impl CPU {
                 */
 
                 self.e = self.a;
+
+                self.cycles += 5;
             }
 
             //MOV H, B
@@ -1363,6 +1550,8 @@ impl CPU {
                 */
 
                 self.h = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV H, C
@@ -1373,6 +1562,8 @@ impl CPU {
                 */
 
                 self.h = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV H, D
@@ -1383,6 +1574,8 @@ impl CPU {
                 */
 
                 self.h = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV H, E
@@ -1393,6 +1586,8 @@ impl CPU {
                 */
 
                 self.h = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV H, H
@@ -1403,6 +1598,8 @@ impl CPU {
                 */
 
                 self.h = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV H, L
@@ -1413,6 +1610,8 @@ impl CPU {
                 */
 
                 self.h = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV H, M
@@ -1425,6 +1624,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.h = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV H, A
@@ -1435,6 +1636,8 @@ impl CPU {
                 */
 
                 self.h = self.a;
+
+                self.cycles += 5;
             }
 
             //MOV L, B
@@ -1445,6 +1648,8 @@ impl CPU {
                 */
 
                 self.l = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV L, C
@@ -1455,6 +1660,8 @@ impl CPU {
                 */
 
                 self.l = self.c;
+                
+                self.cycles += 5;
             }
 
             //MOV L, D
@@ -1465,6 +1672,8 @@ impl CPU {
                 */
 
                 self.l = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV L, E
@@ -1475,6 +1684,8 @@ impl CPU {
                 */
 
                 self.l = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV L, H
@@ -1485,6 +1696,8 @@ impl CPU {
                 */
 
                 self.l = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV L, L
@@ -1495,6 +1708,8 @@ impl CPU {
                 */
 
                 self.l = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV L, M
@@ -1507,6 +1722,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.l = self.ram[addr as usize];
+
+                self.cycles += 7;
             }
 
             //MOV L, A
@@ -1517,6 +1734,8 @@ impl CPU {
                 */
 
                 self.l = self.a;
+
+                self.cycles += 5;
             }
 
             //MOV M, B
@@ -1529,6 +1748,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.b;
+
+                self.cycles += 7;
             }
 
             //MOV M, C
@@ -1541,6 +1762,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.c;
+
+                self.cycles += 7;
             }
 
             //MOV M, D
@@ -1553,6 +1776,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.d;
+
+                self.cycles += 7;
             }
             
             //MOV M, E
@@ -1565,6 +1790,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.e;
+
+                self.cycles += 7;
             }
 
             //MOV M, H
@@ -1577,6 +1804,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.h;
+
+                self.cycles += 7;
             }
 
             //MOV M, L
@@ -1589,10 +1818,15 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.l;
+
+                self.cycles += 7;
             }
 
             //HLT
             (7, 6) => {
+                //TODO
+                
+                self.cycles += 7;
                 unimplemented!("Called 0x76 HLT")
             }
 
@@ -1606,6 +1840,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.ram[addr as usize] = self.a;
+
+                self.cycles += 7;
             }
 
             //MOV A, B
@@ -1616,6 +1852,8 @@ impl CPU {
                 */
 
                 self.a = self.b;
+
+                self.cycles += 5;
             }
 
             //MOV A, B
@@ -1626,6 +1864,8 @@ impl CPU {
                 */
 
                 self.a = self.c;
+
+                self.cycles += 5;
             }
 
             //MOV A, D
@@ -1636,6 +1876,8 @@ impl CPU {
                 */
 
                 self.a = self.d;
+
+                self.cycles += 5;
             }
 
             //MOV A, E
@@ -1646,6 +1888,8 @@ impl CPU {
                 */
 
                 self.a = self.e;
+
+                self.cycles += 5;
             }
 
             //MOV A, H
@@ -1656,6 +1900,8 @@ impl CPU {
                 */
 
                 self.a = self.h;
+
+                self.cycles += 5;
             }
 
             //MOV A, L
@@ -1666,6 +1912,8 @@ impl CPU {
                 */
 
                 self.a = self.l;
+
+                self.cycles += 5;
             }
 
             //MOV A, M
@@ -1678,6 +1926,8 @@ impl CPU {
                 let addr:u16 = ((self.h as u16) << 8) | (self.l as u16);
 
                 self.a = self.ram[addr as usize];
+
+                self.cycles += 5;
             }
 
             //MOV A, A
@@ -1688,6 +1938,8 @@ impl CPU {
                 */
 
                 self.a = self.a;
+
+                self.cycles += 5;
             }
 
             //ADD B
@@ -1706,6 +1958,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD C
@@ -1724,6 +1977,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD D
@@ -1742,6 +1996,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD E
@@ -1760,6 +2015,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD H
@@ -1778,6 +2034,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD L
@@ -1796,6 +2053,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADD M
@@ -1816,6 +2074,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 7;
             }
 
             //ADD A
@@ -1834,6 +2093,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //ADC B
@@ -1856,6 +2116,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ADC C
@@ -1878,6 +2139,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ADC D
@@ -1900,6 +2162,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ADC E
@@ -1922,6 +2185,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ADC H
@@ -1944,7 +2208,8 @@ impl CPU {
 
                 self.a = carry_answer;
 
-            }
+                self.cycles += 4;
+            }  
 
             //ADC L
             (8, 0xD) => {
@@ -1966,6 +2231,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ADC M
@@ -1990,6 +2256,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 7;
             }
 
             //ADC A
@@ -2012,6 +2279,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SUB B
@@ -2030,6 +2298,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB C
@@ -2048,6 +2317,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB D
@@ -2066,6 +2336,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB E
@@ -2084,6 +2355,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB H
@@ -2102,6 +2374,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB L
@@ -2120,6 +2393,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SUB M
@@ -2140,6 +2414,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 7;
             }
 
             //SUB A
@@ -2158,6 +2433,7 @@ impl CPU {
 
                 self.a = answer.0;
 
+                self.cycles += 4;
             }
 
             //SBB B
@@ -2180,6 +2456,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB C
@@ -2202,6 +2479,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB D
@@ -2224,6 +2502,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB E
@@ -2246,6 +2525,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB H
@@ -2268,6 +2548,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB L
@@ -2290,6 +2571,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //SBB M
@@ -2314,6 +2596,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 7;
             }
 
             //SBB A
@@ -2336,6 +2619,7 @@ impl CPU {
 
                 self.a = carry_answer;
 
+                self.cycles += 4;
             }
 
             //ANA B
@@ -2354,6 +2638,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA C
@@ -2372,6 +2657,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA D
@@ -2390,6 +2676,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA E
@@ -2408,6 +2695,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA H
@@ -2426,6 +2714,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA L
@@ -2444,6 +2733,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ANA M
@@ -2464,6 +2754,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 7;
             }
 
             //ANA A
@@ -2482,6 +2773,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA B
@@ -2500,6 +2792,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA C
@@ -2518,6 +2811,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA D
@@ -2536,6 +2830,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA E
@@ -2554,6 +2849,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA H
@@ -2572,6 +2868,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA L
@@ -2590,6 +2887,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //XRA M
@@ -2610,6 +2908,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 7;
             }
 
             //XRA A
@@ -2628,6 +2927,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
              //ORA B
@@ -2646,6 +2946,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA C
@@ -2664,6 +2965,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA D
@@ -2682,6 +2984,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA E
@@ -2700,6 +3003,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA H
@@ -2718,6 +3022,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA L
@@ -2736,6 +3041,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
             //ORA M
@@ -2756,6 +3062,7 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 7;
             }
 
             //ORA A
@@ -2774,9 +3081,10 @@ impl CPU {
 
                 self.a = answer;
 
+                self.cycles += 4;
             }
 
-            //CPM B
+            //CMP B
             (0xB, 8) => {
                 /*
                 1 Bytes
@@ -2790,9 +3098,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.b & 0x0F);
+
+                self.cycles += 4;
             }
 
-            //CPM C
+            //CMP C
             (0xB, 9) => {
                 /*
                 1 Bytes
@@ -2806,9 +3116,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.c & 0x0F);
+
+                self.cycles += 4;
             }
 
-            //CPM D
+            //CMP D
             (0xB, 0xA) => {
                 /*
                 1 Bytes
@@ -2822,9 +3134,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.d & 0x0F);
+
+                self.cycles += 4;
             }
 
-            //CPM E
+            //CMP E
             (0xB, 0xB) => {
                 /*
                 1 Bytes
@@ -2838,9 +3152,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.e & 0x0F);
+
+                self.cycles += 4;
             }
 
-            //CPM H
+            //CMP H
             (0xB, 0xC) => {
                 /*
                 1 Bytes
@@ -2854,9 +3170,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.h & 0x0F);
+                
+                self.cycles += 4;
             }
 
-            //CPM L
+            //CMP L
             (0xB, 0xD) => {
                 /*
                 1 Bytes
@@ -2870,9 +3188,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.l & 0x0F);
+
+                self.cycles += 4;
             }
 
-            //CPM M
+            //CMP M
             (0xB, 0xE) => {
                 /*
                 1 Bytes
@@ -2888,9 +3208,11 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.ram[addr as usize] & 0x0F);
+
+                self.cycles += 7;
             }
 
-            //CPM A
+            //CMP A
             (0xB, 0xF) => {
                 /*
                 1 Bytes
@@ -2904,6 +3226,8 @@ impl CPU {
                 self.p = answer.count_ones() % 2 == 0;
                 self.cy = carry;
                 self.ac = (self.a & 0x0F) < (self.a & 0x0F);
+
+                self.cycles += 4;
             }
             
             //RNZ
@@ -2919,8 +3243,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -2936,6 +3262,7 @@ impl CPU {
                 self.b = self.ram[(self.sp + 1) as usize];
 
                 self.sp += 2;
+                self.cycles += 10;
             }
 
             //JNZ adr
@@ -2948,10 +3275,11 @@ impl CPU {
                 if self.z == false {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
-
                 }
             }
 
@@ -2963,6 +3291,7 @@ impl CPU {
                 */
                 let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                 self.pc = addr;
+                self.cycles += 10;
             }
 
             //CNZ addr
@@ -2982,9 +3311,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
-                    self.pc += 2;                   
+                    self.pc += 2;
+                    self.cycles += 11;               
                 }
                 
             }
@@ -3000,6 +3331,7 @@ impl CPU {
                 self.ram[(self.sp - 1) as usize] = self.b;
 
                 self.sp -= 2;
+                self.cycles += 11;
             }
 
             //ADI D8
@@ -3019,6 +3351,7 @@ impl CPU {
 
                 self.a = answer.0;
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 0
@@ -3034,7 +3367,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x0;
-
+                self.cycles += 11;
             }
 
             //RZ
@@ -3050,8 +3383,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3069,6 +3404,7 @@ impl CPU {
 
                 self.pc = (high_byte << 8) | low_byte;
                 self.sp += 2;
+                self.cycles += 10;
             }
 
             //JZ addr
@@ -3080,9 +3416,11 @@ impl CPU {
                 if self.z {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
                 }
             }
@@ -3096,7 +3434,7 @@ impl CPU {
 
                 let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                 self.pc = addr;
-
+                self.cycles += 10;
             }
 
             //CZ adr
@@ -3118,9 +3456,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
             }
 
@@ -3140,6 +3480,28 @@ impl CPU {
                 #[cfg(feature = "cpudiag")]
                 if address == 5 {
                     if self.c == 9 {
+                        let mut offset = ((self.d as u16) << 8) | self.e as u16;
+                        loop {
+                            let character = self.ram[offset as usize];
+
+                            if character as char == '$' {
+                                break;
+                            } else {
+                                offset += 1;
+                            }
+                            print!("{}", character as char);
+                        }
+                        print!("\n");
+                    } else if address == 0 {
+                        ::std::process::exit(0)
+                    }
+                    if self.c == 2 {
+                        println!("{}", self.e as char)
+                    }
+                }
+                
+                /* if address == 5 {
+                    if self.c == 9 {
                         let offset = ((self.d as u16) << 8) | self.e as u16;
                         let mut str:u8 = 0;
                         let mut count = 0;
@@ -3154,7 +3516,7 @@ impl CPU {
                     } else if address == 0 {
                         ::std::process::exit(0)
                     }
-                }
+                } */
 
                 self.ram[(self.sp - 1) as usize] = ((self.pc + 2) >> 8) as u8;
                 self.ram[(self.sp - 2) as usize] = (self.pc + 2) as u8;
@@ -3162,7 +3524,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = address;
-
+                self.cycles += 17;
             }
 
             //ACI D8
@@ -3185,6 +3547,7 @@ impl CPU {
                 self.a = carry_answer;
 
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 1
@@ -3200,7 +3563,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x8;
-
+                self.cycles += 11;
             }
 
             //RNC
@@ -3216,8 +3579,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3233,6 +3598,7 @@ impl CPU {
                 self.d = self.ram[(self.sp + 1) as usize];
 
                 self.sp += 2;
+                self.cycles += 10;
             }
 
             //JNC Addr
@@ -3245,8 +3611,10 @@ impl CPU {
                 if self.cy == false {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
 
                 }
@@ -3254,10 +3622,44 @@ impl CPU {
 
             //OUT D8
             (0xD, 3) => {
-                
-                //TODO - Implement output api
+
+                //TODO IMPLEMENT OUT API
+
+                self.out_port = self.ram[self.pc as usize];
+
+                #[cfg(feature = "cputest")]
+                match self.out_port { //Emulates CP/M Sys Calls
+                    0 => {
+                        ::std::process::exit(0)
+                    }
+                    1 => {
+                        match self.c {
+                            2 => {
+                                println!("{}", self.e as char);
+                                ::std::process::exit(0)
+                            }
+                            9 => {
+                                let offset = ((self.d as u16) << 8) | self.e as u16;
+                                let mut character:u8 = 0;
+                                let mut count = 0;
+                                while character != ('$' as u8) {
+                                    character = self.ram[(offset + count) as usize];
+                                    print!("{}", character as char);
+                                    count += 1;
+                                }
+                                print!("\n");
+                                ::std::process::exit(0)
+                            }
+                            _ => return
+
+                        }
+                    }
+
+                    _ => return
+                }
 
                 self.pc += 1;
+                self.cycles += 10;
             }
 
             //CNC addr
@@ -3277,9 +3679,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -3295,6 +3699,7 @@ impl CPU {
                 self.ram[(self.sp - 1) as usize] = self.d;
 
                 self.sp -= 2;
+                self.cycles += 11;
             }
 
             //SUI D8
@@ -3316,6 +3721,7 @@ impl CPU {
                 self.a = answer.0;
 
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 2
@@ -3331,7 +3737,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x10;
-
+                self.cycles += 11;
             }
 
             //RC
@@ -3347,8 +3753,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3366,6 +3774,7 @@ impl CPU {
 
                 self.pc = (high_byte << 8) | low_byte;
                 self.sp += 2;
+                self.cycles += 10;
             }
             
             //JC addr
@@ -3377,9 +3786,11 @@ impl CPU {
                 if self.cy {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
                 }
             }
@@ -3392,11 +3803,9 @@ impl CPU {
                 */
                 
                 //TODO: Implement API
-
-                /* self.try_input = true;
-                self.in_port = self.ram[self.pc as usize];
                 
-                self.pc += 1; */
+                self.pc += 1;
+                self.cycles += 10;
             }
 
             //CC addr
@@ -3416,9 +3825,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -3440,6 +3851,7 @@ impl CPU {
                 let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                 self.pc = (high_byte << 8) | low_byte;
+                self.cycles += 17;
             }
 
             //SBI D8
@@ -3462,6 +3874,7 @@ impl CPU {
                 self.a = carry_answer;
 
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 3
@@ -3477,7 +3890,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x13;
-
+                self.cycles += 11;
             }
 
             //RPO
@@ -3493,8 +3906,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3509,8 +3924,10 @@ impl CPU {
 
                 self.l = self.ram[self.sp as usize];
                 self.h = self.ram[(self.sp + 1) as usize];
-
+                
                 self.sp += 2;
+
+                self.cycles += 10;
             }
 
             //JPO addr
@@ -3523,8 +3940,10 @@ impl CPU {
                 if self.p == false {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
 
                 }
@@ -3546,7 +3965,8 @@ impl CPU {
 
                 self.l = self.ram[self.sp as usize];
                 self.ram[self.sp as usize] = xchng_byte;
-
+                
+                self.cycles += 18;
             }
 
             //CPO addr
@@ -3566,9 +3986,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -3584,6 +4006,7 @@ impl CPU {
                 self.ram[(self.sp - 1) as usize] = self.h;
 
                 self.sp -= 2;
+                self.cycles += 11;
             }
 
             //ANI D8
@@ -3603,6 +4026,7 @@ impl CPU {
                 self.a = answer;
 
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 4
@@ -3618,7 +4042,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x20;
-
+                self.cycles += 11;
             }
 
             //RPE
@@ -3634,8 +4058,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3651,7 +4077,7 @@ impl CPU {
                 let low_byte = self.l as u16;
 
                 self.pc = high_byte | low_byte;
-
+                self.cycles += 5;
             }
 
             //JPE addr
@@ -3664,8 +4090,10 @@ impl CPU {
                 if self.p {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
 
                 }
@@ -3687,6 +4115,8 @@ impl CPU {
 
                 self.l = self.e;
                 self.e = xchng_byte;
+
+                self.cycles += 5;
             }
 
             //CPE addr
@@ -3706,9 +4136,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -3730,6 +4162,7 @@ impl CPU {
                 let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                 self.pc = (high_byte << 8) | low_byte;
+                self.cycles += 17;
             }
 
             //XRI D8
@@ -3748,6 +4181,7 @@ impl CPU {
 
                 self.a = answer;
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 5
@@ -3763,7 +4197,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x28;
-
+                self.cycles += 11;
             }
             
             //RP
@@ -3779,8 +4213,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3802,7 +4238,7 @@ impl CPU {
                 self.a = self.ram[(self.sp + 1) as usize];
 
                 self.sp += 2;
-
+                self.cycles += 10;
             }
 
             //JP addr
@@ -3815,8 +4251,10 @@ impl CPU {
                 if self.s == false {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 7;
                     return;
 
                 }
@@ -3825,6 +4263,7 @@ impl CPU {
             //DI
             (0xF, 3) => {
                 self.int_enabled = false;
+                self.cycles += 4;
             }  
 
             //CP addr
@@ -3844,9 +4283,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -3873,6 +4314,7 @@ impl CPU {
                 self.ram[(self.sp - 2) as usize] = flag_value;
 
                 self.sp -= 2;
+                self.cycles += 11;
             }
 
             //ORI D8
@@ -3891,6 +4333,7 @@ impl CPU {
 
                 self.a = answer;
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 6
@@ -3906,7 +4349,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x30;
-
+                self.cycles += 11;
             }
 
             //RM
@@ -3922,8 +4365,10 @@ impl CPU {
 
                     self.pc = (high_byte << 8) | low_byte;
                     self.sp += 2;
+                    self.cycles += 11;
                 }
                 else {
+                    self.cycles += 5;
                     return;
                 }
             }
@@ -3938,7 +4383,7 @@ impl CPU {
                 let hl_16 = ((self.h as u16) << 8) | self.l as u16;
 
                 self.sp = hl_16;
-
+                self.cycles += 5;
             }
 
             //JM addr
@@ -3951,8 +4396,10 @@ impl CPU {
                 if self.s {
                     let addr = ((self.ram[(self.pc + 1) as usize] as u16) << 8) | ((self.ram[self.pc as usize]) as u16);
                     self.pc = addr;
+                    self.cycles += 10;
                 } else {
                     self.pc += 2;
+                    self.cycles += 10;
                     return;
 
                 }
@@ -3961,6 +4408,7 @@ impl CPU {
             //EI
             (0xF, 0xB) => {
                 self.int_enabled = true;
+                self.cycles += 4;
             }
 
             //CM addr
@@ -3980,9 +4428,11 @@ impl CPU {
                     let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                     self.pc = (high_byte << 8) | low_byte;
+                    self.cycles += 17;
                 }
                 else {
                     self.pc += 2;
+                    self.cycles += 11;
                 }
                 
             }
@@ -4004,7 +4454,7 @@ impl CPU {
                 let high_byte = self.ram[(self.pc + 1) as usize] as u16;
 
                 self.pc = (high_byte << 8) | low_byte;
-
+                self.cycles += 17;
             }
           
             //CPI D8
@@ -4023,6 +4473,7 @@ impl CPU {
                 self.ac = (self.a & 0x0F) < (immediate & 0x0F);
 
                 self.pc += 1;
+                self.cycles += 7;
             }
 
             //RST 7
@@ -4038,7 +4489,7 @@ impl CPU {
                 self.sp -= 2;
 
                 self.pc = 0x38;
-
+                self.cycles += 11;
             }
 
             (_, _) => {
